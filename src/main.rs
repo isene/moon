@@ -75,17 +75,28 @@ fn render(offset: i64) {
 
     let f = phase_at(day, hours);
     let (y, m, d) = civil_from_days(day);
-    let left = format!(
-        " {} {} {} {}   {}   {}% lit   {:.1} days old   {}   {}",
-        WEEKDAYS[weekday(day)], d, MONTHS[(m - 1) as usize], y, phase_name(f),
-        (lit_fraction(f) * 100.0).round(), f * SYNODIC, until(f, 0.5, "full"), until(f, 0.0, "new")
-    );
-    let right = "← → day   t today   q quit ";
-    let pad = cols.saturating_sub(left.chars().count() + right.chars().count());
+    let mut facts = vec![
+        format!("{} {} {} {}", WEEKDAYS[weekday(day)], d, MONTHS[(m - 1) as usize], y),
+        phase_name(f).to_string(),
+        format!("{}% lit", (lit_fraction(f) * 100.0).round()),
+        format!("{:.1} days old", f * SYNODIC),
+        until(f, 0.5, "full"),
+        until(f, 0.0, "new"),
+    ];
+    let keys = "← → day   t today   q quit";
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let right_w = keys.chars().count() + 3 + version.chars().count() + 1;
+    // Keys and version always show; a narrow window loses facts from the end.
+    let mut left = format!(" {}", facts.join("   "));
+    while facts.len() > 1 && left.chars().count() + right_w + 2 > cols {
+        facts.pop();
+        left = format!(" {}", facts.join("   "));
+    }
+    let pad = cols.saturating_sub(left.chars().count() + right_w).max(1);
     let mut header = Pane::new(1, 1, cols as u16, 1, 255, 236);
     header.wrap = false;
     header.scroll = false;
-    header.set_text(&format!("{left}{}{right}", " ".repeat(pad)));
+    header.set_text(&format!("{left}{}{keys}   {} ", " ".repeat(pad), style::fg(&version, 245)));
     header.refresh();
 
     let diam = cols.saturating_sub(2).min(main_h * 2).max(2);
