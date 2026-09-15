@@ -20,10 +20,10 @@ const NIGHT: f32 = 0.22;
 const WHITE: f32 = 0.72;
 /// How fast light ramps up past the terminator; higher is a sharper line.
 const RAMP: f32 = 5.0;
-/// Strip: pixels across each small moon, cells per slot, days before the
-/// one on screen.
-const MINI: usize = 10;
-const SLOT: usize = 12;
+/// Strip: pixels across each phase symbol, cells per slot, days before
+/// the one on screen.
+const MINI: usize = 12;
+const SLOT: usize = 14;
 const PAST: i64 = 3;
 
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -102,7 +102,7 @@ fn render(offset: i64) {
     let w = SLOT;
     for i in 0..slots {
         let sd = day - PAST + i as i64;
-        for (r, l) in draw_moon(phase_at(sd, hours), MINI, SLOT, mini_rows).into_iter().enumerate() {
+        for (r, l) in draw_symbol(phase_at(sd, hours), MINI, SLOT, mini_rows).into_iter().enumerate() {
             lines[r].push_str(&l);
         }
         let (_, _, dd) = civil_from_days(sd);
@@ -123,16 +123,37 @@ fn render(offset: i64) {
 }
 
 /// The Moon at cycle fraction `f`, `diam` pixels across, centred in
-/// `width` cells by `rows` rows. A cell is one pixel wide and two tall:
-/// the top pixel is its foreground, the bottom its background.
+/// `width` cells by `rows` rows, with craters and maria from the map.
 fn draw_moon(f: f64, diam: usize, width: usize, rows: usize) -> Vec<String> {
+    let box_px = ((MAP_N as f32 / diam as f32).round() as usize).max(1);
+    paint(f, diam, width, rows, |x, y, sunward| {
+        let lit = (sunward * RAMP).clamp(0.0, 1.0);
+        let (ax, ay) = { let rr = (x * x + y * y).sqrt(); if rr > 0.99 { (x / rr * 0.99, y / rr * 0.99) } else { (x, y) } };
+        albedo(ax, ay, box_px) * (NIGHT + (1.0 - NIGHT) * lit)
+    })
+}
+
+/// The phase as a flat symbol: one light gray for the lit part, one dark
+/// gray for the rest, a sharp line between them.
+fn draw_symbol(f: f64, diam: usize, width: usize, rows: usize) -> Vec<String> {
+    paint(f, diam, width, rows, |_, _, sunward| {
+        let t = (sunward * 12.0 + 0.5).clamp(0.0, 1.0);
+        0.25 + (0.88 - 0.25) * t
+    })
+}
+
+/// Draw a disk `diam` pixels across in `width` × `rows` cells. A cell is
+/// one pixel wide and two tall: the top pixel is its foreground, the
+/// bottom its background. `shade(x, y, sunward)` gives each pixel's
+/// brightness from its place on the disk (-1..1) and how far it faces
+/// the Sun (-1..1, the terminator at 0).
+fn paint(f: f64, diam: usize, width: usize, rows: usize, shade: impl Fn(f32, f32, f32) -> f32) -> Vec<String> {
     let r = diam as f32 / 2.0;
     let cx = width as f32 / 2.0;
     let cy = rows as f32;
     // Where the Sun is, seen from the Moon's centre with the viewer on
     // +z: behind the Moon at new, to the right at first quarter.
     let sun = ((f * 2.0 * PI).sin() as f32, -((f * 2.0 * PI).cos()) as f32);
-    let box_px = ((MAP_N as f32 / diam as f32).round() as usize).max(1);
     let pixel = |px: usize, py: usize| -> Option<(u8, u8, u8)> {
         let x = (px as f32 + 0.5 - cx) / r;
         let y = (cy - py as f32 - 0.5) / r;
@@ -140,10 +161,7 @@ fn draw_moon(f: f64, diam: usize, width: usize, rows: usize) -> Vec<String> {
         let cover = ((1.0 - rr) * r + 0.5).clamp(0.0, 1.0);
         if cover <= 0.0 { return None; }
         let z = (1.0 - rr * rr).max(0.0).sqrt();
-        let lit = ((x * sun.0 + z * sun.1) * RAMP).clamp(0.0, 1.0);
-        // Pixels straddling the limb read the map just inside it.
-        let (ax, ay) = if rr > 0.99 { (x / rr * 0.99, y / rr * 0.99) } else { (x, y) };
-        let v = albedo(ax, ay, box_px) * (NIGHT + (1.0 - NIGHT) * lit) * cover;
+        let v = shade(x, y, x * sun.0 + z * sun.1) * cover;
         let g = (v * 255.0).round().clamp(0.0, 255.0) as u8;
         Some((g, g, g))
     };

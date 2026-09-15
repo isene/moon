@@ -1,27 +1,71 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <defs>
-    <radialGradient id="sky" cx="50%" cy="50%" r="60%">
-      <stop offset="0%" stop-color="#1c1d44"/>
-      <stop offset="100%" stop-color="#04041a"/>
-    </radialGradient>
-    <linearGradient id="shade" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0.40" stop-color="#000000" stop-opacity="0"/>
-      <stop offset="0.58" stop-color="#000000" stop-opacity="0.86"/>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#141420"/>
+      <stop offset="100%" style="stop-color:#08080e"/>
     </linearGradient>
+    <linearGradient id="rust" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f74c00"/>
+      <stop offset="100%" style="stop-color:#b7410e"/>
+    </linearGradient>
+    <radialGradient id="disk" cx="58%" cy="42%" r="62%">
+      <stop offset="0%" style="stop-color:#f4f4ee"/>
+      <stop offset="100%" style="stop-color:#b9b9b2"/>
+    </radialGradient>
+    <linearGradient id="dusk" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#000000" stop-opacity="0"/>
+      <stop offset="100%" style="stop-color:#000000" stop-opacity="0.35"/>
+    </linearGradient>
+    <clipPath id="face"><circle cx="128" cy="104" r="62"/></clipPath>
   </defs>
-  <rect width="256" height="256" rx="48" fill="url(#sky)"/>
-  <g fill="#f8f8f4" opacity="0.9">
-    <circle cx="40" cy="50" r="2"/><circle cx="210" cy="36" r="1.5"/><circle cx="228" cy="120" r="2"/>
-    <circle cx="60" cy="214" r="1.5"/><circle cx="200" cy="210" r="2"/><circle cx="30" cy="130" r="1.5"/>
+  <style>
+    @keyframes twinkle { 0%,100% { opacity: 0.85; } 50% { opacity: 0.25; } }
+    .stars { animation: twinkle 4s ease-in-out infinite; }
+  </style>
+  <circle cx="128" cy="128" r="120" fill="url(#bg)" stroke="url(#rust)" stroke-width="3"/>
+
+  <g class="stars" fill="#c8c8d8">
+    <circle cx="48" cy="70" r="1.4"/><circle cx="206" cy="58" r="1.2"/>
+    <circle cx="214" cy="140" r="1.4"/><circle cx="40" cy="138" r="1.1"/>
   </g>
-  <circle cx="128" cy="128" r="84" fill="#d9d9d2"/>
-  <g fill="#9a9a94">
-    <circle cx="96" cy="96" r="18"/><circle cx="150" cy="80" r="11"/><circle cx="112" cy="150" r="24"/>
-    <circle cx="160" cy="146" r="9"/><circle cx="82" cy="146" r="7"/>
+
+  <!-- the near side: highlands, maria, a few craters -->
+  <g clip-path="url(#face)">
+    <circle cx="128" cy="104" r="62" fill="url(#disk)"/>
+    <g fill="#8e8e88">
+      <ellipse cx="104" cy="80" rx="22" ry="17"/>
+      <ellipse cx="140" cy="74" rx="15" ry="12"/>
+      <ellipse cx="160" cy="98" rx="12" ry="16"/>
+      <ellipse cx="92" cy="112" rx="18" ry="22"/>
+      <ellipse cx="124" cy="104" rx="12" ry="9"/>
+      <circle cx="176" cy="84" r="7"/>
+    </g>
+    <g fill="none" stroke="#d6d6cf" stroke-width="2">
+      <circle cx="122" cy="146" r="6"/><circle cx="150" cy="128" r="4"/><circle cx="76" cy="90" r="4"/>
+    </g>
+    <circle cx="122" cy="146" r="1.6" fill="#ffffff"/>
+    <!-- night side: a waxing gibbous, dark gray with earthshine -->
+    <path d="M128 42 A62 62 0 0 0 128 166 A30 62 0 0 1 128 42 Z" fill="#26262c" opacity="0.9"/>
+    <circle cx="128" cy="104" r="62" fill="url(#dusk)"/>
   </g>
-  <g fill="none" stroke="#bdbdb6" stroke-width="3">
-    <circle cx="150" cy="120" r="8"/><circle cx="130" cy="188" r="6"/>
+
+  <!-- the strip: the days around it -->
+  <g>
+    <circle cx="62"  cy="190" r="8" fill="#2a2a30"/>
+    <path d="M62 182 A8 8 0 0 1 62 198 A3 8 0 0 0 62 182 Z" fill="#d8d8d2"/>
+    <circle cx="84"  cy="190" r="8" fill="#2a2a30"/>
+    <path d="M84 182 A8 8 0 0 1 84 198 Z" fill="#d8d8d2"/>
+    <circle cx="106" cy="190" r="8" fill="#2a2a30"/>
+    <path d="M106 182 A8 8 0 0 1 106 198 A4 8 0 0 1 106 182 Z" fill="#d8d8d2"/>
+    <circle cx="128" cy="190" r="8" fill="#e8e8e2" stroke="#f74c00" stroke-width="1.5"/>
+    <circle cx="150" cy="190" r="8" fill="#2a2a30"/>
+    <path d="M150 182 A8 8 0 0 0 150 198 A4 8 0 0 0 150 182 Z" fill="#d8d8d2"/>
+    <circle cx="172" cy="190" r="8" fill="#2a2a30"/>
+    <path d="M172 182 A8 8 0 0 0 172 198 Z" fill="#d8d8d2"/>
+    <circle cx="194" cy="190" r="8" fill="#2a2a30"/>
+    <path d="M194 182 A8 8 0 0 0 194 198 A3 8 0 0 1 194 182 Z" fill="#d8d8d2"/>
   </g>
-  <circle cx="128" cy="128" r="84" fill="url(#shade)"/>
-  <circle cx="128" cy="128" r="84" fill="none" stroke="#f74c00" stroke-width="5"/>
+
+  <text x="128" y="220" font-family="monospace" font-size="18" font-weight="bold" fill="url(#rust)" text-anchor="middle" letter-spacing="3">moon</text>
+  <text x="128" y="234" font-family="monospace" font-size="8" fill="#888" text-anchor="middle">the moon tonight</text>
 </svg>
