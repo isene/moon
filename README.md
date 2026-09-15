@@ -64,7 +64,7 @@ lit for the day on screen and drawn as a true picture in the terminal.
 It needs a terminal that shows images, like glass or kitty; elsewhere
 the drawn Moon stays with a note.
 
-![The photo, a week on: a waxing gibbous Moon](img/screenshot-photo.png)
+![The photo in glass: tonight's crescent](img/screenshot-photo.png)
 
 ## Telescope view
 
