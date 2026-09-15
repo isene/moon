@@ -33,6 +33,8 @@ rilles in tan. Zoom in and more names appear, biggest first, wherever
 there is room. The craters that stand out to the naked eye, such as
 Tycho, Copernicus, Kepler and Aristarchus, are named on the whole disk.
 
+![The map, with the features named](img/screenshot-map.png)
+
 | Key | Action |
 |---|---|
 | `+` `-` | zoom in / out, up to 16× |
@@ -40,6 +42,8 @@ Tycho, Copernicus, Kepler and Aristarchus, are named on the whole disk.
 | `/` | find a feature: the map centres on it and marks its name |
 | `0` | back to the whole disk |
 | `m` / `Tab` / `Esc` | back to the Moon |
+
+![A search for Tycho, zoomed in and marked](img/screenshot-tycho.png)
 
 Every braille cell holds eight dots in two columns of four, so the map
 has four times the rows of the phase picture. The detail map is 2048
@@ -57,6 +61,8 @@ the naked eye, north up, to a telescope, which shows the Moon upside
 down with south up, to a star diagonal, which mirrors it left to right.
 The Moon, the phase strip and the map all follow, and the arrows still
 pan the way they point.
+
+![The telescope view, south up](img/screenshot-telescope.png)
 
 A search ignores case and accents, so `reaumur` finds Réaumur. It tries
 an exact name first, then one that starts with what you typed, then
