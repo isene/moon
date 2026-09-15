@@ -20,21 +20,26 @@ Part of the [Fe₂O₃ suite](https://isene.github.io/fe2o3/). Built on
 |---|---|
 | `←` `→` / `h` `l` | a day back / forward |
 | `t` | back to today |
-| `m` | the map (and back) |
+| `m` / `Tab` | the map (and back) |
+| `/` | find a feature and open the map on it |
+| `f` | naked eye, telescope, star diagonal |
 | `q` | quit |
 
 ## The map
 
-`m` opens a braille map of the near side with the features named: the
-seas in blue, craters in yellow, mountains, valleys and rilles in tan.
-Zoom in and more names appear, biggest first, wherever there is room.
+`m` or `Tab` opens a braille map of the near side with the features
+named: the seas in blue, craters in yellow, mountains, valleys and
+rilles in tan. Zoom in and more names appear, biggest first, wherever
+there is room. The craters that stand out to the naked eye, such as
+Tycho, Copernicus, Kepler and Aristarchus, are named on the whole disk.
 
 | Key | Action |
 |---|---|
 | `+` `-` | zoom in / out, up to 16× |
 | `←` `↑` `↓` `→` / `h` `j` `k` `l` | pan |
+| `/` | find a feature: the map centres on it and marks its name |
 | `0` | back to the whole disk |
-| `m` / `Esc` | back to the Moon |
+| `m` / `Tab` / `Esc` | back to the Moon |
 
 Every braille cell holds eight dots in two columns of four, so the map
 has four times the rows of the phase picture. The detail map is 2048
@@ -44,6 +49,18 @@ and unpacked the first time the map opens.
 
 The picture is drawn on start, on a key and on a resize. Nothing runs
 in between.
+
+## Telescope view
+
+`f` turns the picture the way you see it at the eyepiece. It steps from
+the naked eye, north up, to a telescope, which shows the Moon upside
+down with south up, to a star diagonal, which mirrors it left to right.
+The Moon, the phase strip and the map all follow, and the arrows still
+pan the way they point.
+
+A search ignores case and accents, so `reaumur` finds Réaumur. It tries
+an exact name first, then one that starts with what you typed, then
+one that holds it.
 
 ## Install
 

@@ -3,7 +3,8 @@
 //! The near side, lit for the phase of the moment, drawn with half-block
 //! cells so every cell holds two pixels. A strip along the bottom shows
 //! the days around the one on screen. `m` opens a braille map to zoom and
-//! pan, with the features named. Nothing runs between key presses.
+//! pan, with the features named; `/` finds one; `f` turns the picture the
+//! way a telescope shows it. Nothing runs between key presses.
 
 use std::f64::consts::PI;
 use std::sync::OnceLock;
@@ -66,6 +67,49 @@ impl View {
 
 struct Feature { name: String, kind: u8, lat: f32, lon: f32, km: f32 }
 
+/// The craters that stand out to the naked eye, named at every zoom.
+const FAMOUS: [&str; 11] = ["Tycho", "Copernicus", "Kepler", "Aristarchus", "Plato", "Grimaldi",
+    "Clavius", "Langrenus", "Petavius", "Theophilus", "Proclus"];
+
+/// Which way up the Moon is drawn: as the eye sees it from the north,
+/// through a telescope that turns it upside down, or through a star
+/// diagonal that mirrors it left to right.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+enum Flip { #[default] Eye, Telescope, Diagonal }
+
+impl Flip {
+    fn next(self) -> Self {
+        match self { Flip::Eye => Flip::Telescope, Flip::Telescope => Flip::Diagonal, Flip::Diagonal => Flip::Eye }
+    }
+    /// An offset on screen as an offset on the Moon. Each flip undoes
+    /// itself, so the same call maps a Moon offset back to the screen.
+    fn apply(self, x: f32, y: f32) -> (f32, f32) {
+        match self { Flip::Eye => (x, y), Flip::Telescope => (-x, -y), Flip::Diagonal => (-x, y) }
+    }
+    fn label(self) -> Option<&'static str> {
+        match self {
+            Flip::Eye => None,
+            Flip::Telescope => Some("Telescope (south up)"),
+            Flip::Diagonal => Some("Star diagonal (mirrored)"),
+        }
+    }
+}
+
+/// Everything a key can change: the day, which screen, where the map
+/// looks, which way up, and the feature a search found.
+#[derive(Default)]
+struct State { offset: i64, map: bool, view: View, flip: Flip, hit: Option<usize> }
+
+impl State {
+    /// Move the map a step on screen, whichever way up it is drawn.
+    fn pan(&mut self, dx: f32, dy: f32) {
+        let (mx, my) = self.flip.apply(dx, dy);
+        self.view.cx += mx;
+        self.view.cy += my;
+        self.view.clamp();
+    }
+}
+
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -76,8 +120,9 @@ fn main() {
         println!();
         println!("Usage: moon");
         println!();
-        println!("Keys: ← → / h l  day back / forward    t  today    m  map    q  quit");
-        println!("Map:  + -  zoom    arrows / h j k l  pan    0  reset    m  back");
+        println!("Keys: ← → / h l  day back / forward    t  today    m / TAB  map    q  quit");
+        println!("      /  find a feature    f  naked eye / telescope / star diagonal");
+        println!("Map:  + -  zoom    arrows / h j k l  pan    0  reset    m / TAB / ESC  back");
         return;
     }
     if args.iter().any(|a| a == "-v" || a == "--version") {
@@ -88,49 +133,113 @@ fn main() {
     Crust::init();
     Crust::set_app_identity("Moon");
     Crust::clear_screen();
-    let mut offset: i64 = 0;
-    let mut map = false;
-    let mut view = View::default();
-    render(offset, map, view);
+    let mut st = State::default();
+    render(&st, None);
     loop {
         let Some(key) = Input::getchr(None) else { continue };
-        if map {
-            let step = 0.3 / view.zoom();
-            match key.as_str() {
-                "q" | "Q" => break,
-                "m" | "ESC" => map = false,
-                "+" | "=" => view.zi = (view.zi + 1).min(ZOOMS.len() - 1),
-                "-" => {
-                    view.zi = view.zi.saturating_sub(1);
-                    if view.zi == 0 { view = View::default(); }
+        let mut note = None;
+        match key.as_str() {
+            "q" | "Q" => break,
+            "m" | "TAB" => st.map = !st.map,
+            "f" => st.flip = st.flip.next(),
+            "/" => note = search(&mut st),
+            "RESIZE" => {}
+            k if st.map => {
+                let step = 0.3 / st.view.zoom();
+                match k {
+                    "ESC" => st.map = false,
+                    "+" | "=" => st.view.zi = (st.view.zi + 1).min(ZOOMS.len() - 1),
+                    "-" => {
+                        st.view.zi = st.view.zi.saturating_sub(1);
+                        if st.view.zi == 0 { st.view = View::default(); }
+                    }
+                    "0" => { st.view = View::default(); st.hit = None; }
+                    "h" | "LEFT" => st.pan(-step, 0.0),
+                    "l" | "RIGHT" => st.pan(step, 0.0),
+                    "k" | "UP" => st.pan(0.0, step),
+                    "j" | "DOWN" => st.pan(0.0, -step),
+                    _ => continue,
                 }
-                "0" => view = View::default(),
-                "h" | "LEFT" => view.cx -= step,
-                "l" | "RIGHT" => view.cx += step,
-                "k" | "UP" => view.cy += step,
-                "j" | "DOWN" => view.cy -= step,
-                "RESIZE" => {}
-                _ => continue,
             }
-            view.clamp();
-        } else {
-            match key.as_str() {
-                "q" | "Q" => break,
-                "h" | "LEFT" => offset -= 1,
-                "l" | "RIGHT" => offset += 1,
-                "t" => offset = 0,
-                "m" => map = true,
-                "RESIZE" => {}
-                _ => continue,
-            }
+            "h" | "LEFT" => st.offset -= 1,
+            "l" | "RIGHT" => st.offset += 1,
+            "t" => st.offset = 0,
+            _ => continue,
         }
-        render(offset, map, view);
+        render(&st, note.as_deref());
     }
     Crust::cleanup();
 }
 
-fn render(offset: i64, map: bool, view: View) {
-    if map { render_map(view) } else { render_phase(offset) }
+/// Paint the screen for `st`, with `note` on the bottom row if there is one.
+fn render(st: &State, note: Option<&str>) {
+    if st.map { render_map(st) } else { render_phase(st) }
+    if let Some(text) = note {
+        let (cols, rows) = Crust::terminal_size();
+        let mut bar = Pane::new(1, rows, cols, 1, 222, 236);
+        bar.wrap = false;
+        bar.scroll = false;
+        bar.set_text(&format!(" {text}"));
+        bar.refresh();
+    }
+}
+
+/// `/` asks for a feature, then opens the map on it, zoomed so it fills
+/// about a third of the height. Returns what to say when nothing matches.
+fn search(st: &mut State) -> Option<String> {
+    let (cols, rows) = Crust::terminal_size();
+    let mut bar = Pane::new(1, rows, cols, 1, 255, 236);
+    bar.wrap = false;
+    bar.scroll = false;
+    let query = bar.ask_or_cancel(" Find: ", "")?;
+    if query.trim().is_empty() { return None; }
+    let names = features();
+    let Some(i) = find(names, &query) else {
+        return Some(format!("No feature named {}", query.trim()));
+    };
+    aim(&mut st.view, &names[i], cols as usize, rows as usize);
+    st.hit = Some(i);
+    st.map = true;
+    None
+}
+
+/// The feature a search means: an exact name first, then a name that
+/// starts with the text, then one that holds it. The list runs biggest
+/// first, so the biggest wins a tie. Case and accents do not matter.
+fn find(names: &[Feature], query: &str) -> Option<usize> {
+    let q = fold(query.trim());
+    if q.is_empty() { return None; }
+    let folded: Vec<String> = names.iter().map(|f| fold(&f.name)).collect();
+    folded.iter().position(|n| *n == q)
+        .or_else(|| folded.iter().position(|n| n.starts_with(&q)))
+        .or_else(|| folded.iter().position(|n| n.contains(&q)))
+}
+
+/// Lower case without accents, so "reaumur" finds Réaumur.
+fn fold(s: &str) -> String {
+    s.chars().flat_map(|c| c.to_lowercase()).map(|c| match c {
+        'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+        'é' | 'è' | 'ê' | 'ë' | 'ě' => 'e',
+        'í' | 'ì' | 'î' | 'ï' => 'i',
+        'ó' | 'ò' | 'ô' | 'ö' | 'õ' | 'ø' => 'o',
+        'ú' | 'ù' | 'û' | 'ü' => 'u',
+        'ç' => 'c',
+        'ñ' => 'n',
+        c => c,
+    }).collect()
+}
+
+/// Centre `view` on `f`, zoomed so it fills about a third of the height
+/// of a `cols` × `rows` window.
+fn aim(view: &mut View, f: &Feature, cols: usize, rows: usize) {
+    let (la, lo) = (f.lat.to_radians(), f.lon.to_radians());
+    view.cx = la.cos() * lo.sin();
+    view.cy = la.sin();
+    let h = rows.saturating_sub(1).max(1);
+    let base = (cols * 2).min(h * 4) as f32 * 0.96;
+    let want = h as f32 * 4.0 / 3.0 / (f.km.max(1.0) / MOON_KM * base);
+    view.zi = ZOOMS.iter().rposition(|&z| z <= want).unwrap_or(0);
+    view.clamp();
 }
 
 /// The top bar: facts on the left, keys and version on the right. The
@@ -151,31 +260,33 @@ fn header(cols: usize, mut facts: Vec<String>, keys: &str) {
     bar.refresh();
 }
 
-/// Paint the whole screen for the day `offset` days from today.
-fn render_phase(offset: i64) {
+/// Paint the Moon and the strip for the day `st.offset` days from today.
+fn render_phase(st: &State) {
     let (cols, rows) = Crust::terminal_size();
     let (cols, rows) = (cols as usize, rows as usize);
     let (today, hours) = now_local();
-    let day = today + offset;
+    let day = today + st.offset;
     let strip_h = MINI / 2 + 2;
     let main_h = rows.saturating_sub(1 + strip_h).max(1);
 
     let f = phase_at(day, hours);
     let (y, m, d) = civil_from_days(day);
-    header(cols, vec![
+    let mut facts = vec![
         format!("{} {} {} {}", WEEKDAYS[weekday(day)], d, MONTHS[(m - 1) as usize], y),
         phase_name(f).to_string(),
         format!("{}% lit", (lit_fraction(f) * 100.0).round()),
         format!("{:.1} days old", f * SYNODIC),
         until(f, 0.5, "full"),
         until(f, 0.0, "new"),
-    ], "← → day   t today   m map   q quit");
+    ];
+    if let Some(v) = st.flip.label() { facts.insert(1, v.to_string()); }
+    header(cols, facts, "← → day   t today   TAB map   / find   f view   q quit");
 
     let diam = cols.saturating_sub(2).min(main_h * 2).max(2);
     let mut main = Pane::new(1, 2, cols as u16, main_h as u16, 255, 16);
     main.wrap = false;
     main.scroll = false;
-    main.set_text(&draw_moon(f, diam, cols, main_h).join("\n"));
+    main.set_text(&draw_moon(f, diam, cols, main_h, st.flip).join("\n"));
     main.refresh();
 
     let slots = (cols / SLOT).max(1);
@@ -185,7 +296,7 @@ fn render_phase(offset: i64) {
     let w = SLOT;
     for i in 0..slots {
         let sd = day - PAST + i as i64;
-        for (r, l) in draw_symbol(phase_at(sd, hours), MINI, SLOT, mini_rows).into_iter().enumerate() {
+        for (r, l) in draw_symbol(phase_at(sd, hours), MINI, SLOT, mini_rows, st.flip).into_iter().enumerate() {
             lines[r].push_str(&l);
         }
         let (_, _, dd) = civil_from_days(sd);
@@ -207,9 +318,9 @@ fn render_phase(offset: i64) {
 
 /// The Moon at cycle fraction `f`, `diam` pixels across, centred in
 /// `width` cells by `rows` rows, with craters and maria from the map.
-fn draw_moon(f: f64, diam: usize, width: usize, rows: usize) -> Vec<String> {
+fn draw_moon(f: f64, diam: usize, width: usize, rows: usize, flip: Flip) -> Vec<String> {
     let box_px = ((MAP_N as f32 / diam as f32).round() as usize).max(1);
-    paint(f, diam, width, rows, |x, y, sunward| {
+    paint(f, diam, width, rows, flip, |x, y, sunward| {
         let lit = (sunward * RAMP).clamp(0.0, 1.0);
         let (ax, ay) = { let rr = (x * x + y * y).sqrt(); if rr > 0.99 { (x / rr * 0.99, y / rr * 0.99) } else { (x, y) } };
         albedo(ax, ay, box_px) * (NIGHT + (1.0 - NIGHT) * lit)
@@ -218,28 +329,28 @@ fn draw_moon(f: f64, diam: usize, width: usize, rows: usize) -> Vec<String> {
 
 /// The phase as a flat symbol: one light gray for the lit part, one dark
 /// gray for the rest, a sharp line between them.
-fn draw_symbol(f: f64, diam: usize, width: usize, rows: usize) -> Vec<String> {
-    paint(f, diam, width, rows, |_, _, sunward| {
+fn draw_symbol(f: f64, diam: usize, width: usize, rows: usize, flip: Flip) -> Vec<String> {
+    paint(f, diam, width, rows, flip, |_, _, sunward| {
         let t = (sunward * 12.0 + 0.5).clamp(0.0, 1.0);
         0.25 + (0.88 - 0.25) * t
     })
 }
 
-/// Draw a disk `diam` pixels across in `width` × `rows` cells. A cell is
-/// one pixel wide and two tall: the top pixel is its foreground, the
-/// bottom its background. `shade(x, y, sunward)` gives each pixel's
-/// brightness from its place on the disk (-1..1) and how far it faces
-/// the Sun (-1..1, the terminator at 0).
-fn paint(f: f64, diam: usize, width: usize, rows: usize, shade: impl Fn(f32, f32, f32) -> f32) -> Vec<String> {
+/// Draw a disk `diam` pixels across in `width` × `rows` cells, turned by
+/// `flip`. A cell is one pixel wide and two tall: the top pixel is its
+/// foreground, the bottom its background. `shade(x, y, sunward)` gives
+/// each pixel's brightness from its place on the Moon (-1..1, east and
+/// north positive) and how far it faces the Sun (-1..1, the terminator
+/// at 0).
+fn paint(f: f64, diam: usize, width: usize, rows: usize, flip: Flip, shade: impl Fn(f32, f32, f32) -> f32) -> Vec<String> {
     let r = diam as f32 / 2.0;
     let cx = width as f32 / 2.0;
     let cy = rows as f32;
     // Where the Sun is, seen from the Moon's centre with the viewer on
-    // +z: behind the Moon at new, to the right at first quarter.
+    // +z: behind the Moon at new, to the east at first quarter.
     let sun = ((f * 2.0 * PI).sin() as f32, -((f * 2.0 * PI).cos()) as f32);
     let pixel = |px: usize, py: usize| -> Option<(u8, u8, u8)> {
-        let x = (px as f32 + 0.5 - cx) / r;
-        let y = (cy - py as f32 - 0.5) / r;
+        let (x, y) = flip.apply((px as f32 + 0.5 - cx) / r, (cy - py as f32 - 0.5) / r);
         let rr = (x * x + y * y).sqrt();
         let cover = ((1.0 - rr) * r + 0.5).clamp(0.0, 1.0);
         if cover <= 0.0 { return None; }
@@ -287,30 +398,34 @@ fn albedo(x: f32, y: f32, size: usize) -> f32 {
 
 // ── Map ────────────────────────────────────────────────────────────────
 
-/// Paint the braille map for `view`.
-fn render_map(view: View) {
+/// Paint the braille map for `st`.
+fn render_map(st: &State) {
     let (cols, rows) = Crust::terminal_size();
     let (cols, rows) = (cols as usize, rows as usize);
     let h = rows.saturating_sub(1).max(1);
+    let view = st.view;
     let lat = view.cy.clamp(-1.0, 1.0).asin();
     let lon = (view.cx / lat.cos().max(1e-6)).clamp(-1.0, 1.0).asin();
     let (lat, lon) = (lat.to_degrees().round(), lon.to_degrees().round());
     let zoom = view.zoom();
-    header(cols, vec![
+    let mut facts = vec![
         "Map".to_string(),
         if zoom.fract() == 0.0 { format!("zoom {zoom}×") } else { format!("zoom {zoom:.1}×") },
         format!("{}°{} {}°{}", lat.abs(), if lat < 0.0 { "S" } else { "N" }, lon.abs(), if lon < 0.0 { "W" } else { "E" }),
-    ], "+ - zoom   ←↑↓→ pan   0 reset   m moon   q quit");
+    ];
+    if let Some(v) = st.flip.label() { facts.insert(1, v.to_string()); }
+    header(cols, facts, "+ - zoom   ←↑↓→ pan   / find   f view   TAB moon   q quit");
     let mut main = Pane::new(1, 2, cols as u16, h as u16, 255, 16);
     main.wrap = false;
     main.scroll = false;
-    main.set_text(&draw_map(cols, h, view, features()).join("\n"));
+    main.set_text(&draw_map(cols, h, view, st.flip, features(), st.hit).join("\n"));
     main.refresh();
 }
 
-/// The map in `width` × `rows` braille cells. Each cell holds 2×4
-/// sub-pixels, and a sub-pixel is square, so the disk stays round.
-fn draw_map(width: usize, rows: usize, view: View, names: &[Feature]) -> Vec<String> {
+/// The map in `width` × `rows` braille cells, turned by `flip`, with the
+/// search hit `hit` marked. Each cell holds 2×4 sub-pixels, and a
+/// sub-pixel is square, so the disk stays round.
+fn draw_map(width: usize, rows: usize, view: View, flip: Flip, names: &[Feature], hit: Option<usize>) -> Vec<String> {
     let lv = levels();
     let (w, h) = (width * 2, rows * 4);
     let d = w.min(h) as f32 * 0.96 * view.zoom();
@@ -324,8 +439,11 @@ fn draw_map(width: usize, rows: usize, view: View, names: &[Feature]) -> Vec<Str
             let mut on = 0;
             for dy in 0..4 {
                 for dx in 0..2 {
-                    let x = view.cx + ((col * 2 + dx) as f32 + 0.5 - w as f32 / 2.0) * k;
-                    let y = view.cy - ((row * 4 + dy) as f32 + 0.5 - h as f32 / 2.0) * k;
+                    let (mx, my) = flip.apply(
+                        ((col * 2 + dx) as f32 + 0.5 - w as f32 / 2.0) * k,
+                        (h as f32 / 2.0 - (row * 4 + dy) as f32 - 0.5) * k,
+                    );
+                    let (x, y) = (view.cx + mx, view.cy + my);
                     if x * x + y * y <= 1.0 {
                         v[dy * 2 + dx] = sample(lv, x, y, px_per_sub);
                         on += 1;
@@ -336,7 +454,7 @@ fn draw_map(width: usize, rows: usize, view: View, names: &[Feature]) -> Vec<Str
         }
         cells.push(line);
     }
-    label(&mut cells, view, d, names);
+    label(&mut cells, view, flip, d, names, hit);
     cells.into_iter().map(|l| l.concat()).collect()
 }
 
@@ -363,23 +481,30 @@ fn braille_cell(v: &[f32; 8]) -> String {
 
 /// How much a feature's size counts toward getting its name. Rilles,
 /// ridges and valleys are long and thin, so their size overstates them.
-fn weight(kind: u8) -> f32 {
-    if kind == b'o' { 0.35 } else { 1.0 }
+/// The famous craters are bright for their size.
+fn weight(f: &Feature) -> f32 {
+    if FAMOUS.contains(&f.name.as_str()) { 8.0 } else if f.kind == b'o' { 0.35 } else { 1.0 }
 }
 
-/// Write feature names over the map, biggest first, each where it has
-/// room. A feature gets its name once it is a few cells across.
-fn label(cells: &mut [Vec<String>], view: View, d: f32, names: &[Feature]) {
+/// Write feature names over the map, the search hit first, then biggest
+/// first, each where it has room. A feature gets its name once it is a
+/// few cells across; the hit always does, black on yellow.
+fn label(cells: &mut [Vec<String>], view: View, flip: Flip, d: f32, names: &[Feature], hit: Option<usize>) {
     let rows = cells.len();
     let width = cells.first().map_or(0, |l| l.len());
     let mut taken = vec![vec![false; width]; rows];
-    for f in names {
+    let order = hit.into_iter().chain((0..names.len()).filter(move |&i| Some(i) != hit));
+    for i in order {
+        let f = &names[i];
+        let is_hit = Some(i) == hit;
         let (la, lo) = (f.lat.to_radians(), f.lon.to_radians());
-        if la.cos() * lo.cos() < 0.1 { continue; }
+        if la.cos() * lo.cos() < 0.1 && !is_hit { continue; }
         let size = f.km / MOON_KM * d;
-        if size * weight(f.kind) < 11.0 { continue; }
-        let sx = width as f32 + (la.cos() * lo.sin() - view.cx) * d / 2.0;
-        let sy = rows as f32 * 2.0 - (la.sin() - view.cy) * d / 2.0;
+        if size * weight(f) < 11.0 && !is_hit { continue; }
+        // Where the feature sits, in disk units from the centre of the screen.
+        let (ox, oy) = flip.apply(la.cos() * lo.sin() - view.cx, la.sin() - view.cy);
+        let sx = width as f32 + ox * d / 2.0;
+        let sy = rows as f32 * 2.0 - oy * d / 2.0;
         let n = f.name.chars().count();
         // Plains are named in their middle; craters and the rest just
         // below the rim, so the name does not cover what it names.
@@ -388,15 +513,19 @@ fn label(cells: &mut [Vec<String>], view: View, d: f32, names: &[Feature]) {
         let col = (sx / 2.0).floor() as i64 - n as i64 / 2;
         if row < 0 || row >= rows as i64 || col < 0 || col as usize + n > width { continue; }
         // The name itself stays on the disk.
-        let ly = view.cy - ((row as f32 + 0.5) * 4.0 - rows as f32 * 2.0) * 2.0 / d;
-        let lx = la.cos() * lo.sin();
-        if lx * lx + ly * ly > 1.0 { continue; }
+        let (lx, ly) = flip.apply(ox, (rows as f32 * 2.0 - (row as f32 + 0.5) * 4.0) * 2.0 / d);
+        let (lx, ly) = (view.cx + lx, view.cy + ly);
+        if lx * lx + ly * ly > 1.0 && !is_hit { continue; }
         let (row, col) = (row as usize, col as usize);
         let (from, to) = (col.saturating_sub(1), (col + n + 1).min(width));
         if taken[row][from..to].iter().any(|&t| t) { continue; }
         taken[row][from..to].iter_mut().for_each(|t| *t = true);
-        let color = match f.kind { b'p' => 153, b'c' => 222, _ => 180 };
-        cells[row][col] = style::styled(&f.name, Some(color), Some(16), "");
+        cells[row][col] = if is_hit {
+            style::styled(&f.name, Some(16), Some(226), "b")
+        } else {
+            let color = match f.kind { b'p' => 153, b'c' => 222, _ => 180 };
+            style::styled(&f.name, Some(color), Some(16), "")
+        };
         for c in col + 1..col + n { cells[row][c] = String::new(); }
     }
 }
@@ -457,7 +586,7 @@ fn features() -> &'static Vec<Feature> {
                 km: p.next()?.parse().ok()?,
             })
         }).collect();
-        list.sort_by(|a, b| (b.km * weight(b.kind)).total_cmp(&(a.km * weight(a.kind))));
+        list.sort_by(|a, b| (b.km * weight(b)).total_cmp(&(a.km * weight(a))));
         list
     })
 }
@@ -567,14 +696,35 @@ mod tests {
         assert!(names.len() > 1000);
         let cop = names.iter().find(|f| f.name == "Copernicus").unwrap();
         assert!((cop.lat - 9.6).abs() < 0.2 && (cop.lon + 20.1).abs() < 0.2);
-        let lines = draw_map(120, 40, View::default(), names);
+        let lines = draw_map(120, 40, View::default(), Flip::Eye, names, None);
         assert_eq!(lines.len(), 40);
         assert!(lines.iter().all(|l| visible(l) == 120));
         assert!(lines.iter().any(|l| l.contains("Mare Imbrium")));
+        // Tycho is small but bright, so it is named on the whole disk.
+        assert!(lines.iter().any(|l| l.contains("Tycho")));
         // Zoomed in on Copernicus, it is named.
         let (la, lo) = (cop.lat.to_radians(), cop.lon.to_radians());
         let view = View { zi: 6, cx: la.cos() * lo.sin(), cy: la.sin() };
-        assert!(draw_map(120, 40, view, names).iter().any(|l| l.contains("Copernicus")));
+        assert!(draw_map(120, 40, view, Flip::Eye, names, None).iter().any(|l| l.contains("Copernicus")));
+    }
+
+    #[test]
+    fn a_search_finds_the_feature_and_the_map_marks_it() {
+        let names = features();
+        let name = |q: &str| find(names, q).map(|i| names[i].name.as_str());
+        assert_eq!(name("tycho"), Some("Tycho"));
+        assert_eq!(name("reaumur"), Some("Réaumur"));
+        assert_eq!(name("imbrium"), Some("Mare Imbrium"));
+        assert_eq!(name("zzzz"), None);
+        assert_eq!(name("  "), None);
+        // The smallest crater on the list still gets its name once found.
+        let i = names.iter().rposition(|f| f.kind == b'c').unwrap();
+        let mut view = View::default();
+        aim(&mut view, &names[i], 120, 41);
+        for flip in [Flip::Eye, Flip::Telescope, Flip::Diagonal] {
+            let lines = draw_map(120, 40, view, flip, names, Some(i));
+            assert!(lines.iter().any(|l| l.contains(&names[i].name)), "{} with {flip:?}", names[i].name);
+        }
     }
 
     #[test]
@@ -600,17 +750,23 @@ mod tests {
 
     #[test]
     fn the_drawing_fills_its_box_and_lights_the_right_side() {
-        let lines = draw_moon(0.25, 40, 60, 20);
-        assert_eq!(lines.len(), 20);
-        assert!(lines.iter().all(|l| visible(l) == 60));
-        // First quarter: the right half is lit, the left half is not.
-        let row = &lines[10];
         let gray = |cell: &str| -> u32 {
             cell.split("38;2;").nth(1).and_then(|s| s.split(';').next()).and_then(|s| s.parse().ok()).unwrap_or(0)
         };
-        let cells: Vec<&str> = row.split('▀').collect();
-        let left = gray(cells[cells.len() / 2 - 12]);
-        let right = gray(cells[cells.len() / 2 + 12]);
+        let sides = |flip: Flip| {
+            let lines = draw_moon(0.25, 40, 60, 20, flip);
+            assert_eq!(lines.len(), 20);
+            assert!(lines.iter().all(|l| visible(l) == 60));
+            let cells: Vec<String> = lines[10].split('▀').map(String::from).collect();
+            (gray(&cells[cells.len() / 2 - 12]), gray(&cells[cells.len() / 2 + 12]))
+        };
+        // First quarter: to the eye the right half is lit.
+        let (left, right) = sides(Flip::Eye);
         assert!(right > left * 2, "right {right} should be well brighter than left {left}");
+        // A telescope and a star diagonal both put the lit half on the left.
+        for flip in [Flip::Telescope, Flip::Diagonal] {
+            let (left, right) = sides(flip);
+            assert!(left > right * 2, "{flip:?}: left {left} should be well brighter than right {right}");
+        }
     }
 }
