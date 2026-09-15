@@ -2,6 +2,8 @@
 
 The Moon as it looks tonight, in the terminal.
 
+![moon](img/screenshot.png)
+
 The big disk is the near side of the Moon, lit for the phase of the
 moment: the sunlit part in light gray and white, the night side in dark
 gray, craters and maria on both. A strip of phase symbols along the bottom shows the
