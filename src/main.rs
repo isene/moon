@@ -3,8 +3,9 @@
 //! The near side, lit for the phase of the moment, drawn with half-block
 //! cells so every cell holds two pixels. A strip along the bottom shows
 //! the days around the one on screen. `m` opens a braille map to zoom and
-//! pan, with the features named; `/` finds one; `f` turns the picture the
-//! way a telescope shows it. Nothing runs between key presses.
+//! pan, with the features named, then the real photo through glow; `/`
+//! finds a feature; `f` turns the picture the way a telescope shows it.
+//! Nothing runs between key presses.
 
 use std::f64::consts::PI;
 use std::sync::OnceLock;
@@ -51,6 +52,14 @@ const EDGE: f32 = 0.04;
 /// sunward crater walls go brighter.
 const MAP_WHITE: f32 = 0.9;
 
+/// The near side as NASA photographed it, 1024×1024, from the 8k LROC
+/// mosaic without shading, for the photo screen. Stored like `MAP_BIG`.
+const PHOTO: &[u8] = include_bytes!("../img/moon-photo-1024.z");
+const PHOTO_N: usize = 1024;
+/// How bright the photo's night side stays, and how sharp its terminator is.
+const PHOTO_NIGHT: f32 = 0.06;
+const PHOTO_RAMP: f32 = 12.0;
+
 /// Where the map looks: a step in `ZOOMS`, and the centre as a point on
 /// the disk (-1..1, east and north positive).
 #[derive(Clone, Copy, Default)]
@@ -95,10 +104,20 @@ impl Flip {
     }
 }
 
+/// The three screens `Tab` steps through.
+#[derive(Clone, Copy, Default, PartialEq)]
+enum Screen { #[default] Moon, Map, Photo }
+
+impl Screen {
+    fn next(self) -> Self {
+        match self { Screen::Moon => Screen::Map, Screen::Map => Screen::Photo, Screen::Photo => Screen::Moon }
+    }
+}
+
 /// Everything a key can change: the day, which screen, where the map
 /// looks, which way up, and the feature a search found.
 #[derive(Default)]
-struct State { offset: i64, map: bool, view: View, flip: Flip, hit: Option<usize> }
+struct State { offset: i64, screen: Screen, view: View, flip: Flip, hit: Option<usize> }
 
 impl State {
     /// Move the map a step on screen, whichever way up it is drawn.
@@ -120,9 +139,9 @@ fn main() {
         println!();
         println!("Usage: moon");
         println!();
-        println!("Keys: ← → / h l  day back / forward    t  today    m / TAB  map    q  quit");
+        println!("Keys: ← → / h l  day back / forward    t  today    TAB / m  Moon, map, photo    q  quit");
         println!("      /  find a feature    f  naked eye / telescope / star diagonal");
-        println!("Map:  + -  zoom    arrows / h j k l  pan    0  reset    m / TAB / ESC  back");
+        println!("Map:  + -  zoom    arrows / h j k l  pan    0  reset    ESC  back to the Moon");
         return;
     }
     if args.iter().any(|a| a == "-v" || a == "--version") {
@@ -134,20 +153,21 @@ fn main() {
     Crust::set_app_identity("Moon");
     Crust::clear_screen();
     let mut st = State::default();
-    render(&st, None);
+    let mut photo: Option<glow::Display> = None;
+    render(&st, None, &mut photo);
     loop {
         let Some(key) = Input::getchr(None) else { continue };
         let mut note = None;
         match key.as_str() {
             "q" | "Q" => break,
-            "m" | "TAB" => st.map = !st.map,
+            "m" | "TAB" => st.screen = st.screen.next(),
+            "ESC" => st.screen = Screen::Moon,
             "f" => st.flip = st.flip.next(),
             "/" => note = search(&mut st),
             "RESIZE" => {}
-            k if st.map => {
+            k if st.screen == Screen::Map => {
                 let step = 0.3 / st.view.zoom();
                 match k {
-                    "ESC" => st.map = false,
                     "+" | "=" => st.view.zi = (st.view.zi + 1).min(ZOOMS.len() - 1),
                     "-" => {
                         st.view.zi = st.view.zi.saturating_sub(1);
@@ -166,14 +186,34 @@ fn main() {
             "t" => st.offset = 0,
             _ => continue,
         }
-        render(&st, note.as_deref());
+        render(&st, note.as_deref(), &mut photo);
     }
+    // A photo left placed would sit over the shell after we exit.
+    if let Some(d) = photo.as_mut() { d.clear_all(); }
     Crust::cleanup();
 }
 
-/// Paint the screen for `st`, with `note` on the bottom row if there is one.
-fn render(st: &State, note: Option<&str>) {
-    if st.map { render_map(st) } else { render_phase(st) }
+/// Paint the screen for `st`, with `note` on the bottom row if there is
+/// one. `photo` is the image display, made the first time the photo
+/// screen opens.
+fn render(st: &State, note: Option<&str>, photo: &mut Option<glow::Display>) {
+    // A photo sits above the text, so it comes down before any repaint.
+    let (cols, rows) = Crust::terminal_size();
+    if let Some(d) = photo.as_mut() { d.clear(1, 1, cols, rows, cols, rows); }
+    let mut note = note.map(String::from);
+    match st.screen {
+        Screen::Moon => render_phase(st, None),
+        Screen::Map => render_map(st),
+        Screen::Photo => {
+            let d = photo.get_or_insert_with(glow::Display::new);
+            if d.supported() {
+                render_phase(st, Some(d));
+            } else {
+                render_phase(st, None);
+                note = Some("This terminal cannot show images".to_string());
+            }
+        }
+    }
     if let Some(text) = note {
         let (cols, rows) = Crust::terminal_size();
         let mut bar = Pane::new(1, rows, cols, 1, 222, 236);
@@ -199,7 +239,7 @@ fn search(st: &mut State) -> Option<String> {
     };
     aim(&mut st.view, &names[i], cols as usize, rows as usize);
     st.hit = Some(i);
-    st.map = true;
+    st.screen = Screen::Map;
     None
 }
 
@@ -261,7 +301,8 @@ fn header(cols: usize, mut facts: Vec<String>, keys: &str) {
 }
 
 /// Paint the Moon and the strip for the day `st.offset` days from today.
-fn render_phase(st: &State) {
+/// With `photo`, the big Moon is the real photo, shown through glow.
+fn render_phase(st: &State, photo: Option<&mut glow::Display>) {
     let (cols, rows) = Crust::terminal_size();
     let (cols, rows) = (cols as usize, rows as usize);
     let (today, hours) = now_local();
@@ -280,13 +321,18 @@ fn render_phase(st: &State) {
         until(f, 0.0, "new"),
     ];
     if let Some(v) = st.flip.label() { facts.insert(1, v.to_string()); }
-    header(cols, facts, "← → day   t today   TAB map   / find   f view   q quit");
+    if photo.is_some() { facts.insert(1, "Photo".to_string()); }
+    header(cols, facts, if photo.is_some() {
+        "← → day   t today   TAB moon   / find   f view   q quit"
+    } else {
+        "← → day   t today   TAB map   / find   f view   q quit"
+    });
 
     let diam = cols.saturating_sub(2).min(main_h * 2).max(2);
     let mut main = Pane::new(1, 2, cols as u16, main_h as u16, 255, 16);
     main.wrap = false;
     main.scroll = false;
-    main.set_text(&draw_moon(f, diam, cols, main_h, st.flip).join("\n"));
+    main.set_text(&if photo.is_some() { String::new() } else { draw_moon(f, diam, cols, main_h, st.flip).join("\n") });
     main.refresh();
 
     let slots = (cols / SLOT).max(1);
@@ -314,6 +360,10 @@ fn render_phase(st: &State) {
     strip.scroll = false;
     strip.set_text(&format!("\n{}\n{}", lines.join("\n"), labels));
     strip.refresh();
+    if let Some(d) = photo {
+        let png = photo_png(f, cols, main_h, glow::get_cell_size(), st.flip);
+        d.show_png(&png, 1, 2, cols as u16, main_h as u16);
+    }
 }
 
 /// The Moon at cycle fraction `f`, `diam` pixels across, centred in
@@ -414,7 +464,7 @@ fn render_map(st: &State) {
         format!("{}°{} {}°{}", lat.abs(), if lat < 0.0 { "S" } else { "N" }, lon.abs(), if lon < 0.0 { "W" } else { "E" }),
     ];
     if let Some(v) = st.flip.label() { facts.insert(1, v.to_string()); }
-    header(cols, facts, "+ - zoom   ←↑↓→ pan   / find   f view   TAB moon   q quit");
+    header(cols, facts, "+ - zoom   ←↑↓→ pan   / find   f view   TAB photo   q quit");
     let mut main = Pane::new(1, 2, cols as u16, h as u16, 255, 16);
     main.wrap = false;
     main.scroll = false;
@@ -551,10 +601,7 @@ fn sample(levels: &[Vec<u8>], x: f32, y: f32, px_per_sub: f32) -> f32 {
 fn levels() -> &'static Vec<Vec<u8>> {
     static LEVELS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
     LEVELS.get_or_init(|| {
-        let mut px = miniz_oxide::inflate::decompress_to_vec_zlib(MAP_BIG).unwrap_or_default();
-        if px.len() != BIG_N * BIG_N { px = vec![0; BIG_N * BIG_N]; }
-        for i in BIG_N..px.len() { px[i] = px[i].wrapping_add(px[i - BIG_N]); }
-        let mut out = vec![px];
+        let mut out = vec![inflate_rows(MAP_BIG, BIG_N)];
         let mut n = BIG_N;
         while n > 128 {
             let (prev, h) = (out.last().unwrap(), n / 2);
@@ -571,6 +618,84 @@ fn levels() -> &'static Vec<Vec<u8>> {
         }
         out
     })
+}
+
+/// Unpack an `n`×`n` map stored as zlib, each row kept as its difference
+/// from the row above.
+fn inflate_rows(data: &[u8], n: usize) -> Vec<u8> {
+    let mut px = miniz_oxide::inflate::decompress_to_vec_zlib(data).unwrap_or_default();
+    if px.len() != n * n { px = vec![0; n * n]; }
+    for i in n..px.len() { px[i] = px[i].wrapping_add(px[i - n]); }
+    px
+}
+
+// ── Photo ──────────────────────────────────────────────────────────────
+
+/// The photo map, unpacked the first time the photo screen opens.
+fn photo_map() -> &'static Vec<u8> {
+    static PX: OnceLock<Vec<u8>> = OnceLock::new();
+    PX.get_or_init(|| inflate_rows(PHOTO, PHOTO_N))
+}
+
+/// The real Moon for phase `f`: NASA's photo lit by the Sun, as a PNG
+/// filling `cols` × `rows` cells of `cell` pixels, turned by `flip`.
+/// Sized to whole cells so glow places it without stretching.
+fn photo_png(f: f64, cols: usize, rows: usize, cell: (u16, u16), flip: Flip) -> Vec<u8> {
+    let (w, h) = (cols * cell.0 as usize, rows * cell.1 as usize);
+    encode_png(&photo_pixels(f, w, h, flip), w, h, image::codecs::png::FilterType::Up)
+}
+
+/// The photo's pixels, `w` × `h`, as RGBA.
+fn photo_pixels(f: f64, w: usize, h: usize, flip: Flip) -> Vec<u8> {
+    let map = photo_map();
+    let n = PHOTO_N as f32;
+    let r = (w.min(h) as f32 / 2.0 - 1.0).max(1.0);
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let sun = ((f * 2.0 * PI).sin() as f32, -((f * 2.0 * PI).cos()) as f32);
+    let mut rgba = [0u8, 0, 0, 255].repeat(w * h);
+    for py in 0..h {
+        // Only the pixels across the disk on this row need work; the
+        // sky is already black.
+        let sy = (cy - py as f32 - 0.5) / r;
+        let reach = (1.0 + 1.0 / r).powi(2) - sy * sy;
+        if reach <= 0.0 { continue; }
+        let half = reach.sqrt() * r;
+        let from = (cx - half - 1.0).max(0.0) as usize;
+        let to = ((cx + half + 1.0) as usize).min(w);
+        for px in from..to {
+            let o = (py * w + px) * 4;
+            let (x, y) = flip.apply((px as f32 + 0.5 - cx) / r, sy);
+            let rr = (x * x + y * y).sqrt();
+            let cover = ((1.0 - rr) * r + 0.5).clamp(0.0, 1.0);
+            if cover <= 0.0 { continue; }
+            // Pixels on the limb read the map just inside it.
+            let inward = if rr > 0.995 { 0.995 / rr } else { 1.0 };
+            let u = ((x * inward + 1.0) / 2.0 * n - 0.5).clamp(0.0, n - 1.0);
+            let v = ((1.0 - y * inward) / 2.0 * n - 0.5).clamp(0.0, n - 1.0);
+            let (x0, y0) = (u as usize, v as usize);
+            let (x1, y1) = ((x0 + 1).min(PHOTO_N - 1), (y0 + 1).min(PHOTO_N - 1));
+            let (fx, fy) = (u - x0 as f32, v - y0 as f32);
+            let at = |i: usize, j: usize| map[j * PHOTO_N + i] as f32;
+            let albedo = (at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx) * (1.0 - fy)
+                + (at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx) * fy;
+            let z = (1.0 - rr * rr).max(0.0).sqrt();
+            let lit = ((x * sun.0 + z * sun.1) * PHOTO_RAMP).clamp(0.0, 1.0);
+            let g = (albedo / WHITE * (PHOTO_NIGHT + (1.0 - PHOTO_NIGHT) * lit) * cover)
+                .round().clamp(0.0, 255.0) as u8;
+            rgba[o] = g;
+            rgba[o + 1] = g;
+            rgba[o + 2] = g;
+        }
+    }
+    rgba
+}
+
+fn encode_png(rgba: &[u8], w: usize, h: usize, filter: image::codecs::png::FilterType) -> Vec<u8> {
+    let mut png = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new_with_quality(
+        &mut png, image::codecs::png::CompressionType::Fast, filter);
+    let _ = image::ImageEncoder::write_image(encoder, rgba, w as u32, h as u32, image::ExtendedColorType::Rgba8);
+    png
 }
 
 fn features() -> &'static Vec<Feature> {
@@ -725,6 +850,24 @@ mod tests {
             let lines = draw_map(120, 40, view, flip, names, Some(i));
             assert!(lines.iter().any(|l| l.contains(&names[i].name)), "{} with {flip:?}", names[i].name);
         }
+    }
+
+    #[test]
+    fn the_photo_fills_whole_cells_and_is_lit_on_the_sunward_side() {
+        let sides = |flip: Flip| {
+            let png = photo_png(0.25, 40, 20, (10, 20), flip);
+            let img = image::load_from_memory(&png).unwrap().to_luma8();
+            assert_eq!(img.dimensions(), (400, 400));
+            (img.get_pixel(120, 200)[0], img.get_pixel(280, 200)[0])
+        };
+        // First quarter: to the eye the right side is lit.
+        let (left, right) = sides(Flip::Eye);
+        assert!(right > 60 && right > left.saturating_mul(3), "left {left}, right {right}");
+        let (left, right) = sides(Flip::Telescope);
+        assert!(left > 60 && left > right.saturating_mul(3), "left {left}, right {right}");
+        let t = std::time::Instant::now();
+        let png = photo_png(0.3, 190, 50, (10, 20), Flip::Eye);
+        eprintln!("photo 1900x1000: {:?}, {} bytes", t.elapsed(), png.len());
     }
 
     #[test]

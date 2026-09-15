@@ -1,6 +1,6 @@
 [package]
 name = "moon"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 authors = ["Geir Isene <g@isene.com>"]
 description = "The Moon as it looks tonight: the near side lit for its phase, with the days around it. Built on crust and orbit."
@@ -9,9 +9,12 @@ repository = "https://github.com/isene/moon"
 
 [dependencies]
 crust = { version = "0.1", path = "../crust", package = "fe2o3-crust" }
+glow = { version = "0.1.26", path = "../glow", package = "fe2o3-glow" }
 orbit = { version = "0.1.5", path = "../orbit", package = "fe2o3-orbit" }
 libc = "0.2"
 miniz_oxide = "0.8"
+# Already in the build through glow; used here to write the photo PNG.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.release]
 opt-level = 3
