@@ -2,9 +2,11 @@
 //!
 //! The near side, lit for the phase of the moment, drawn with half-block
 //! cells so every cell holds two pixels. A strip along the bottom shows
-//! the days around the one on screen. Nothing runs between key presses.
+//! the days around the one on screen. `m` opens a braille map to zoom and
+//! pan, with the features named. Nothing runs between key presses.
 
 use std::f64::consts::PI;
+use std::sync::OnceLock;
 
 use crust::{style, Crust, Input, Pane};
 
@@ -26,6 +28,44 @@ const MINI: usize = 12;
 const SLOT: usize = 14;
 const PAST: i64 = 3;
 
+/// The near side again at 2048×2048 for the map, from NASA's 8k LROC
+/// mosaic shaded with LOLA elevation lit from the north-west, so craters
+/// show their rims. zlib, each row stored as its difference from the row
+/// above.
+const MAP_BIG: &[u8] = include_bytes!("../img/moon-2048.z");
+const BIG_N: usize = 2048;
+/// Named near-side features from the IAU Gazetteer of Planetary
+/// Nomenclature, biggest first: name, kind (p plain, c crater, o other),
+/// latitude, longitude (east positive), size in km.
+const FEATURES: &str = include_str!("../img/features.tsv");
+const MOON_KM: f32 = 3474.8;
+/// At 16× a map pixel is about one and a half sub-pixels; past that it
+/// only gets blurrier.
+const ZOOMS: [f32; 9] = [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0];
+/// Map brightness that shows as black; the darkest maria sit just above.
+const DARK: f32 = 0.12;
+/// How much brighter than its cell a sub-pixel must be to get a dot.
+const EDGE: f32 = 0.04;
+/// Map value (0..1) that counts as white on the shaded map, where only
+/// sunward crater walls go brighter.
+const MAP_WHITE: f32 = 0.9;
+
+/// Where the map looks: a step in `ZOOMS`, and the centre as a point on
+/// the disk (-1..1, east and north positive).
+#[derive(Clone, Copy, Default)]
+struct View { zi: usize, cx: f32, cy: f32 }
+
+impl View {
+    fn zoom(&self) -> f32 { ZOOMS[self.zi] }
+    /// Keep the centre on the disk.
+    fn clamp(&mut self) {
+        let r = (self.cx * self.cx + self.cy * self.cy).sqrt();
+        if r > 1.0 { self.cx /= r; self.cy /= r; }
+    }
+}
+
+struct Feature { name: String, kind: u8, lat: f32, lon: f32, km: f32 }
+
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -36,7 +76,8 @@ fn main() {
         println!();
         println!("Usage: moon");
         println!();
-        println!("Keys: ← → / h l  day back / forward    t  today    q  quit");
+        println!("Keys: ← → / h l  day back / forward    t  today    m  map    q  quit");
+        println!("Map:  + -  zoom    arrows / h j k l  pan    0  reset    m  back");
         return;
     }
     if args.iter().any(|a| a == "-v" || a == "--version") {
@@ -48,24 +89,70 @@ fn main() {
     Crust::set_app_identity("Moon");
     Crust::clear_screen();
     let mut offset: i64 = 0;
-    render(offset);
+    let mut map = false;
+    let mut view = View::default();
+    render(offset, map, view);
     loop {
         let Some(key) = Input::getchr(None) else { continue };
-        match key.as_str() {
-            "q" | "Q" => break,
-            "h" | "LEFT" => offset -= 1,
-            "l" | "RIGHT" => offset += 1,
-            "t" => offset = 0,
-            "RESIZE" => {}
-            _ => continue,
+        if map {
+            let step = 0.3 / view.zoom();
+            match key.as_str() {
+                "q" | "Q" => break,
+                "m" | "ESC" => map = false,
+                "+" | "=" => view.zi = (view.zi + 1).min(ZOOMS.len() - 1),
+                "-" => {
+                    view.zi = view.zi.saturating_sub(1);
+                    if view.zi == 0 { view = View::default(); }
+                }
+                "0" => view = View::default(),
+                "h" | "LEFT" => view.cx -= step,
+                "l" | "RIGHT" => view.cx += step,
+                "k" | "UP" => view.cy += step,
+                "j" | "DOWN" => view.cy -= step,
+                "RESIZE" => {}
+                _ => continue,
+            }
+            view.clamp();
+        } else {
+            match key.as_str() {
+                "q" | "Q" => break,
+                "h" | "LEFT" => offset -= 1,
+                "l" | "RIGHT" => offset += 1,
+                "t" => offset = 0,
+                "m" => map = true,
+                "RESIZE" => {}
+                _ => continue,
+            }
         }
-        render(offset);
+        render(offset, map, view);
     }
     Crust::cleanup();
 }
 
+fn render(offset: i64, map: bool, view: View) {
+    if map { render_map(view) } else { render_phase(offset) }
+}
+
+/// The top bar: facts on the left, keys and version on the right. The
+/// keys always show; a narrow window loses facts from the end.
+fn header(cols: usize, mut facts: Vec<String>, keys: &str) {
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let right_w = keys.chars().count() + 3 + version.chars().count() + 1;
+    let mut left = format!(" {}", facts.join("   "));
+    while facts.len() > 1 && left.chars().count() + right_w + 2 > cols {
+        facts.pop();
+        left = format!(" {}", facts.join("   "));
+    }
+    let pad = cols.saturating_sub(left.chars().count() + right_w).max(1);
+    let mut bar = Pane::new(1, 1, cols as u16, 1, 255, 236);
+    bar.wrap = false;
+    bar.scroll = false;
+    bar.set_text(&format!("{left}{}{keys}   {} ", " ".repeat(pad), style::fg(&version, 245)));
+    bar.refresh();
+}
+
 /// Paint the whole screen for the day `offset` days from today.
-fn render(offset: i64) {
+fn render_phase(offset: i64) {
     let (cols, rows) = Crust::terminal_size();
     let (cols, rows) = (cols as usize, rows as usize);
     let (today, hours) = now_local();
@@ -75,29 +162,14 @@ fn render(offset: i64) {
 
     let f = phase_at(day, hours);
     let (y, m, d) = civil_from_days(day);
-    let mut facts = vec![
+    header(cols, vec![
         format!("{} {} {} {}", WEEKDAYS[weekday(day)], d, MONTHS[(m - 1) as usize], y),
         phase_name(f).to_string(),
         format!("{}% lit", (lit_fraction(f) * 100.0).round()),
         format!("{:.1} days old", f * SYNODIC),
         until(f, 0.5, "full"),
         until(f, 0.0, "new"),
-    ];
-    let keys = "← → day   t today   q quit";
-    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let right_w = keys.chars().count() + 3 + version.chars().count() + 1;
-    // Keys and version always show; a narrow window loses facts from the end.
-    let mut left = format!(" {}", facts.join("   "));
-    while facts.len() > 1 && left.chars().count() + right_w + 2 > cols {
-        facts.pop();
-        left = format!(" {}", facts.join("   "));
-    }
-    let pad = cols.saturating_sub(left.chars().count() + right_w).max(1);
-    let mut header = Pane::new(1, 1, cols as u16, 1, 255, 236);
-    header.wrap = false;
-    header.scroll = false;
-    header.set_text(&format!("{left}{}{keys}   {} ", " ".repeat(pad), style::fg(&version, 245)));
-    header.refresh();
+    ], "← → day   t today   m map   q quit");
 
     let diam = cols.saturating_sub(2).min(main_h * 2).max(2);
     let mut main = Pane::new(1, 2, cols as u16, main_h as u16, 255, 16);
@@ -213,6 +285,183 @@ fn albedo(x: f32, y: f32, size: usize) -> f32 {
     if cnt == 0 { 0.6 } else { (sum as f32 / cnt as f32 / 255.0 / WHITE).min(1.0) }
 }
 
+// ── Map ────────────────────────────────────────────────────────────────
+
+/// Paint the braille map for `view`.
+fn render_map(view: View) {
+    let (cols, rows) = Crust::terminal_size();
+    let (cols, rows) = (cols as usize, rows as usize);
+    let h = rows.saturating_sub(1).max(1);
+    let lat = view.cy.clamp(-1.0, 1.0).asin();
+    let lon = (view.cx / lat.cos().max(1e-6)).clamp(-1.0, 1.0).asin();
+    let (lat, lon) = (lat.to_degrees().round(), lon.to_degrees().round());
+    let zoom = view.zoom();
+    header(cols, vec![
+        "Map".to_string(),
+        if zoom.fract() == 0.0 { format!("zoom {zoom}×") } else { format!("zoom {zoom:.1}×") },
+        format!("{}°{} {}°{}", lat.abs(), if lat < 0.0 { "S" } else { "N" }, lon.abs(), if lon < 0.0 { "W" } else { "E" }),
+    ], "+ - zoom   ←↑↓→ pan   0 reset   m moon   q quit");
+    let mut main = Pane::new(1, 2, cols as u16, h as u16, 255, 16);
+    main.wrap = false;
+    main.scroll = false;
+    main.set_text(&draw_map(cols, h, view, features()).join("\n"));
+    main.refresh();
+}
+
+/// The map in `width` × `rows` braille cells. Each cell holds 2×4
+/// sub-pixels, and a sub-pixel is square, so the disk stays round.
+fn draw_map(width: usize, rows: usize, view: View, names: &[Feature]) -> Vec<String> {
+    let lv = levels();
+    let (w, h) = (width * 2, rows * 4);
+    let d = w.min(h) as f32 * 0.96 * view.zoom();
+    let k = 2.0 / d;
+    let px_per_sub = BIG_N as f32 / d;
+    let mut cells: Vec<Vec<String>> = Vec::with_capacity(rows);
+    for row in 0..rows {
+        let mut line = Vec::with_capacity(width);
+        for col in 0..width {
+            let mut v = [0f32; 8];
+            let mut on = 0;
+            for dy in 0..4 {
+                for dx in 0..2 {
+                    let x = view.cx + ((col * 2 + dx) as f32 + 0.5 - w as f32 / 2.0) * k;
+                    let y = view.cy - ((row * 4 + dy) as f32 + 0.5 - h as f32 / 2.0) * k;
+                    if x * x + y * y <= 1.0 {
+                        v[dy * 2 + dx] = sample(lv, x, y, px_per_sub);
+                        on += 1;
+                    }
+                }
+            }
+            line.push(if on == 0 { " ".to_string() } else { braille_cell(&v) });
+        }
+        cells.push(line);
+    }
+    label(&mut cells, view, d, names);
+    cells.into_iter().map(|l| l.concat()).collect()
+}
+
+/// One braille cell from its eight sub-pixels, row by row, left then
+/// right. The cell's background carries its mean tone. Dots mark the
+/// sub-pixels clearly brighter than that mean, drawn brighter still, so a
+/// crater rim or a bright edge shows at sub-cell detail and flat ground
+/// stays clean.
+fn braille_cell(v: &[f32; 8]) -> String {
+    const BIT: [u32; 8] = [0x01, 0x08, 0x02, 0x10, 0x04, 0x20, 0x40, 0x80];
+    let t = v.map(|x| ((x - DARK) / (1.0 - DARK)).clamp(0.0, 1.0));
+    let mean = t.iter().sum::<f32>() / 8.0;
+    let (mut bits, mut lit) = (0u32, 0f32);
+    for (i, &x) in t.iter().enumerate() {
+        if x > mean + EDGE { bits |= BIT[i]; lit += x; }
+    }
+    let gray = |c: f32| { let c = c.clamp(0.0, 255.0).round() as u8; (c, c, c) };
+    let bg = gray(mean * 230.0);
+    if bits == 0 { return style::rgb(" ", None, Some(bg), ""); }
+    let fg = gray(lit / bits.count_ones() as f32 * 230.0 + 60.0);
+    let glyph = char::from_u32(0x2800 + bits).unwrap_or(' ').to_string();
+    style::rgb(&glyph, Some(fg), Some(bg), "")
+}
+
+/// How much a feature's size counts toward getting its name. Rilles,
+/// ridges and valleys are long and thin, so their size overstates them.
+fn weight(kind: u8) -> f32 {
+    if kind == b'o' { 0.35 } else { 1.0 }
+}
+
+/// Write feature names over the map, biggest first, each where it has
+/// room. A feature gets its name once it is a few cells across.
+fn label(cells: &mut [Vec<String>], view: View, d: f32, names: &[Feature]) {
+    let rows = cells.len();
+    let width = cells.first().map_or(0, |l| l.len());
+    let mut taken = vec![vec![false; width]; rows];
+    for f in names {
+        let (la, lo) = (f.lat.to_radians(), f.lon.to_radians());
+        if la.cos() * lo.cos() < 0.1 { continue; }
+        let size = f.km / MOON_KM * d;
+        if size * weight(f.kind) < 11.0 { continue; }
+        let sx = width as f32 + (la.cos() * lo.sin() - view.cx) * d / 2.0;
+        let sy = rows as f32 * 2.0 - (la.sin() - view.cy) * d / 2.0;
+        let n = f.name.chars().count();
+        // Plains are named in their middle; craters and the rest just
+        // below the rim, so the name does not cover what it names.
+        let below = if f.kind == b'p' { 0 } else { (size / 8.0).ceil() as i64 };
+        let row = (sy / 4.0).floor() as i64 + below;
+        let col = (sx / 2.0).floor() as i64 - n as i64 / 2;
+        if row < 0 || row >= rows as i64 || col < 0 || col as usize + n > width { continue; }
+        // The name itself stays on the disk.
+        let ly = view.cy - ((row as f32 + 0.5) * 4.0 - rows as f32 * 2.0) * 2.0 / d;
+        let lx = la.cos() * lo.sin();
+        if lx * lx + ly * ly > 1.0 { continue; }
+        let (row, col) = (row as usize, col as usize);
+        let (from, to) = (col.saturating_sub(1), (col + n + 1).min(width));
+        if taken[row][from..to].iter().any(|&t| t) { continue; }
+        taken[row][from..to].iter_mut().for_each(|t| *t = true);
+        let color = match f.kind { b'p' => 153, b'c' => 222, _ => 180 };
+        cells[row][col] = style::styled(&f.name, Some(color), Some(16), "");
+        for c in col + 1..col + n { cells[row][c] = String::new(); }
+    }
+}
+
+/// Map brightness (0..1) at disk point (x, y), read from the halving whose
+/// pixels come closest to one screen sub-pixel.
+fn sample(levels: &[Vec<u8>], x: f32, y: f32, px_per_sub: f32) -> f32 {
+    let lvl = (px_per_sub.max(1.0).log2().floor() as usize).min(levels.len() - 1);
+    let n = BIG_N >> lvl;
+    let map = &levels[lvl];
+    let u = ((x + 1.0) / 2.0 * n as f32 - 0.5).clamp(0.0, (n - 1) as f32);
+    let v = ((1.0 - y) / 2.0 * n as f32 - 0.5).clamp(0.0, (n - 1) as f32);
+    let (x0, y0) = (u as usize, v as usize);
+    let (x1, y1) = ((x0 + 1).min(n - 1), (y0 + 1).min(n - 1));
+    let (fx, fy) = (u - x0 as f32, v - y0 as f32);
+    let at = |i: usize, j: usize| map[j * n + i] as f32;
+    let top = at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx;
+    let bottom = at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx;
+    ((top * (1.0 - fy) + bottom * fy) / 255.0 / MAP_WHITE).min(1.0)
+}
+
+/// The big map and its halvings down to 128 pixels, built on first use.
+fn levels() -> &'static Vec<Vec<u8>> {
+    static LEVELS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+    LEVELS.get_or_init(|| {
+        let mut px = miniz_oxide::inflate::decompress_to_vec_zlib(MAP_BIG).unwrap_or_default();
+        if px.len() != BIG_N * BIG_N { px = vec![0; BIG_N * BIG_N]; }
+        for i in BIG_N..px.len() { px[i] = px[i].wrapping_add(px[i - BIG_N]); }
+        let mut out = vec![px];
+        let mut n = BIG_N;
+        while n > 128 {
+            let (prev, h) = (out.last().unwrap(), n / 2);
+            let mut next = vec![0u8; h * h];
+            for y in 0..h {
+                for x in 0..h {
+                    let at = |i: usize, j: usize| prev[j * n + i] as u16;
+                    let sum = at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1);
+                    next[y * h + x] = ((sum + 2) / 4) as u8;
+                }
+            }
+            out.push(next);
+            n = h;
+        }
+        out
+    })
+}
+
+fn features() -> &'static Vec<Feature> {
+    static LIST: OnceLock<Vec<Feature>> = OnceLock::new();
+    LIST.get_or_init(|| {
+        let mut list: Vec<Feature> = FEATURES.lines().filter_map(|l| {
+            let mut p = l.split('\t');
+            Some(Feature {
+                name: p.next()?.to_string(),
+                kind: p.next()?.bytes().next()?,
+                lat: p.next()?.parse().ok()?,
+                lon: p.next()?.parse().ok()?,
+                km: p.next()?.parse().ok()?,
+            })
+        }).collect();
+        list.sort_by(|a, b| (b.km * weight(b.kind)).total_cmp(&(a.km * weight(a.kind))));
+        list
+    })
+}
+
 // ── Phase ──────────────────────────────────────────────────────────────
 
 /// Where in the cycle the Moon is at `hours` on `day`: 0 new, 0.5 full.
@@ -297,6 +546,35 @@ mod tests {
             else { n += 1; }
         }
         n
+    }
+
+    #[test]
+    fn a_braille_cell_dots_its_bright_sub_pixels() {
+        let mut v = [0.0f32; 8];
+        v[0] = 1.0;
+        assert!(braille_cell(&v).contains('\u{2801}'));
+        let mut v = [0.0f32; 8];
+        v[7] = 1.0;
+        assert!(braille_cell(&v).contains('\u{2880}'));
+        // Flat ground, dark or bright, is its tone alone with no dots.
+        assert!(braille_cell(&[0.1; 8]).contains(' '));
+        assert!(braille_cell(&[1.0; 8]).contains(' '));
+    }
+
+    #[test]
+    fn the_map_fills_its_box_and_names_what_it_shows() {
+        let names = features();
+        assert!(names.len() > 1000);
+        let cop = names.iter().find(|f| f.name == "Copernicus").unwrap();
+        assert!((cop.lat - 9.6).abs() < 0.2 && (cop.lon + 20.1).abs() < 0.2);
+        let lines = draw_map(120, 40, View::default(), names);
+        assert_eq!(lines.len(), 40);
+        assert!(lines.iter().all(|l| visible(l) == 120));
+        assert!(lines.iter().any(|l| l.contains("Mare Imbrium")));
+        // Zoomed in on Copernicus, it is named.
+        let (la, lo) = (cop.lat.to_radians(), cop.lon.to_radians());
+        let view = View { zi: 6, cx: la.cos() * lo.sin(), cy: la.sin() };
+        assert!(draw_map(120, 40, view, names).iter().any(|l| l.contains("Copernicus")));
     }
 
     #[test]

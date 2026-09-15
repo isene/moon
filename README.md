@@ -20,7 +20,27 @@ Part of the [Fe₂O₃ suite](https://isene.github.io/fe2o3/). Built on
 |---|---|
 | `←` `→` / `h` `l` | a day back / forward |
 | `t` | back to today |
+| `m` | the map (and back) |
 | `q` | quit |
+
+## The map
+
+`m` opens a braille map of the near side with the features named: the
+seas in blue, craters in yellow, mountains, valleys and rilles in tan.
+Zoom in and more names appear, biggest first, wherever there is room.
+
+| Key | Action |
+|---|---|
+| `+` `-` | zoom in / out, up to 16× |
+| `←` `↑` `↓` `→` / `h` `j` `k` `l` | pan |
+| `0` | back to the whole disk |
+| `m` / `Esc` | back to the Moon |
+
+Every braille cell holds eight dots in two columns of four, so the map
+has four times the rows of the phase picture. The detail map is 2048
+pixels across, shaded with the Moon's measured heights and lit from the
+north-west so craters show their rims. It is compressed into the binary
+and unpacked the first time the map opens.
 
 The picture is drawn on start, on a key and on a resize. Nothing runs
 in between.
@@ -52,6 +72,13 @@ side on the right while waxing, as seen from the northern hemisphere.
 Moon map: NASA/GSFC/Arizona State University, Lunar Reconnaissance
 Orbiter (LROC WAC), from the
 [CGI Moon Kit](https://svs.gsfc.nasa.gov/4720). Public domain.
+
+Heights for the map shading: NASA/GSFC, Lunar Orbiter Laser Altimeter
+(LOLA), from the same kit. Public domain.
+
+Feature names: the IAU / USGS
+[Gazetteer of Planetary Nomenclature](https://planetarynames.wr.usgs.gov/),
+near side only, without the lettered satellite craters. Public domain.
 
 ## License
 
