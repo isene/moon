@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "fe2o3-glow"
-version = "0.1.30"
+version = "0.1.32"
 dependencies = [
  "base64",
  "image",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "moon"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "fe2o3-crust",
  "fe2o3-glow",

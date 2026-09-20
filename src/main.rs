@@ -343,10 +343,9 @@ fn render_phase(st: &State, pixels: Option<&mut glow::Display>) {
     strip.set_text(&format!("\n{}\n{}", lines.join("\n"), labels));
     strip.refresh();
     if let Some(d) = pixels {
-        let cell = glow::get_cell_size();
-        d.show_canvas(&disk_canvas(f, cols, main_h, cell, st.flip), 1, 2);
+        d.show_canvas(&disk_canvas(f, cols, main_h, None, st.flip), 1, 2);
         let days: Vec<f64> = (0..slots).map(|i| phase_at(day - PAST + i as i64, hours)).collect();
-        d.show_canvas(&strip_canvas(&days, SLOT, mini_rows, cell, st.flip), 1, (2 + main_h + 1) as u16);
+        d.show_canvas(&strip_canvas(&days, SLOT, mini_rows, None, st.flip), 1, (2 + main_h + 1) as u16);
     }
 }
 
@@ -455,7 +454,7 @@ fn render_map(st: &State, pixels: Option<&mut glow::Display>) {
     match pixels {
         Some(d) => {
             // The names are text; the picture has holes where they sit.
-            let (text, canvas) = map_canvas(cols, h, view, st.flip, features(), st.hit, glow::get_cell_size());
+            let (text, canvas) = map_canvas(cols, h, view, st.flip, features(), st.hit, None);
             main.set_text(&text);
             main.refresh();
             d.show_canvas(&canvas, 1, 2);
@@ -471,10 +470,10 @@ fn render_map(st: &State, pixels: Option<&mut glow::Display>) {
 /// pixels, the same view as `draw_map`. Returns the text for the box,
 /// blank but for the names, and the canvas, with a hole under each name
 /// so the text shows through.
-fn map_canvas(width: usize, rows: usize, view: View, flip: Flip, names: &[Feature], hit: Option<usize>, cell: (u16, u16)) -> (String, glow::Canvas) {
+fn map_canvas(width: usize, rows: usize, view: View, flip: Flip, names: &[Feature], hit: Option<usize>, cell: Option<(u16, u16)>) -> (String, glow::Canvas) {
     let lv = levels();
-    let mut c = glow::Canvas::with_cell(width as u16, rows as u16, cell);
-    let (cw, ch) = (c.cell.0 as usize, c.cell.1 as usize);
+    let mut c = glow::Canvas::sized(width as u16, rows as u16, cell);
+    let (cw, ch) = (c.cell_w(), c.cell_h());
     let (w, h) = (c.w, c.h);
     // The braille map's geometry, a cell being 2 by 4 sub-pixels, so the
     // names land where `label` puts them.
@@ -668,8 +667,8 @@ fn inflate_rows(data: &[u8], n: usize) -> Vec<u8> {
 /// The Moon for phase `f` on a canvas of `cols` × `rows` cells of `cell`
 /// pixels, turned by `flip`: the shaded map lit by the Sun, with
 /// earthshine on the night side.
-fn disk_canvas(f: f64, cols: usize, rows: usize, cell: (u16, u16), flip: Flip) -> glow::Canvas {
-    let mut c = glow::Canvas::with_cell(cols as u16, rows as u16, cell);
+fn disk_canvas(f: f64, cols: usize, rows: usize, cell: Option<(u16, u16)>, flip: Flip) -> glow::Canvas {
+    let mut c = glow::Canvas::sized(cols as u16, rows as u16, cell);
     let (w, h) = (c.w, c.h);
     disk_into(&mut c, f, 0, 0, w, h, flip);
     c
@@ -677,9 +676,9 @@ fn disk_canvas(f: f64, cols: usize, rows: usize, cell: (u16, u16), flip: Flip) -
 
 /// The strip: one small Moon for each phase in `days`, each in a box
 /// `slot` cells wide and `rows` tall.
-fn strip_canvas(days: &[f64], slot: usize, rows: usize, cell: (u16, u16), flip: Flip) -> glow::Canvas {
-    let mut c = glow::Canvas::with_cell((slot * days.len().max(1)) as u16, rows as u16, cell);
-    let (sw, sh) = (slot * c.cell.0 as usize, c.h);
+fn strip_canvas(days: &[f64], slot: usize, rows: usize, cell: Option<(u16, u16)>, flip: Flip) -> glow::Canvas {
+    let mut c = glow::Canvas::sized((slot * days.len().max(1)) as u16, rows as u16, cell);
+    let (sw, sh) = (c.w / days.len().max(1), c.h);
     for (i, &f) in days.iter().enumerate() {
         disk_into(&mut c, f, i * sw, 0, sw, sh, flip);
     }
@@ -877,7 +876,7 @@ mod tests {
     #[test]
     fn the_disk_fills_whole_cells_and_is_lit_on_the_sunward_side() {
         let sides = |flip: Flip| {
-            let c = disk_canvas(0.25, 40, 20, (10, 20), flip);
+            let c = disk_canvas(0.25, 40, 20, Some((10, 20)), flip);
             assert_eq!((c.w, c.h), (400, 400));
             let at = |x: usize, y: usize| c.rgba[(y * c.w + x) * 4];
             (at(120, 200), at(280, 200))
@@ -888,14 +887,14 @@ mod tests {
         let (left, right) = sides(Flip::Telescope);
         assert!(left > 60 && left > right.saturating_mul(2), "left {left}, right {right}");
         let t = std::time::Instant::now();
-        let png = disk_canvas(0.3, 190, 50, (10, 20), Flip::Eye).png();
+        let png = disk_canvas(0.3, 190, 50, Some((10, 20)), Flip::Eye).png();
         eprintln!("disk 1900x1000: {:?}, {} bytes", t.elapsed(), png.len());
     }
 
     #[test]
     fn the_strip_holds_one_small_moon_per_day() {
         // New, first quarter, full: three slots of 14 by 6 cells.
-        let c = strip_canvas(&[0.0, 0.25, 0.5], 14, 6, (10, 20), Flip::Eye);
+        let c = strip_canvas(&[0.0, 0.25, 0.5], 14, 6, Some((10, 20)), Flip::Eye);
         assert_eq!((c.w, c.h), (420, 120));
         let centre = |slot: usize| c.rgba[(60 * c.w + slot * 140 + 70) * 4];
         let (new, full) = (centre(0), centre(2));
@@ -907,7 +906,7 @@ mod tests {
     fn the_pixel_map_names_the_hit_and_cuts_a_hole_for_it() {
         let names = features();
         let i = find(names, "Tycho").unwrap();
-        let (text, c) = map_canvas(120, 40, View::default(), Flip::Eye, names, Some(i), (10, 20));
+        let (text, c) = map_canvas(120, 40, View::default(), Flip::Eye, names, Some(i), Some((10, 20)));
         assert!(text.contains("Tycho"));
         assert_eq!(text.lines().count(), 40);
         assert_eq!((c.w, c.h), (1200, 800));
