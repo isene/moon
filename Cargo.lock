@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "moon"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "fe2o3-crust",
  "fe2o3-glow",

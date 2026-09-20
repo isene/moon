@@ -7,10 +7,11 @@ The Moon as it looks tonight, in the terminal.
 The big disk is the near side of the Moon, lit for the phase of the
 moment: the sunlit part in light gray and white, the night side in dark
 gray, craters and maria on both. In glass, or any terminal that shows
-images, the disk is real pixels; elsewhere each cell holds two. A strip of
-phase symbols along the bottom shows the
-three days before, the day on screen, and the days ahead until the edge
-of the window. Today's label is yellow.
+images, the disk is real pixels; elsewhere each cell holds two.
+
+A strip of small Moons along the bottom shows the three days before,
+the day on screen, and the days ahead until the edge of the window.
+Today's label is yellow.
 
 Part of the [Fe₂O₃ suite](https://isene.github.io/fe2o3/). Built on
 [crust](https://github.com/isene/crust) (panes) and
@@ -22,7 +23,7 @@ Part of the [Fe₂O₃ suite](https://isene.github.io/fe2o3/). Built on
 |---|---|
 | `←` `→` / `h` `l` | a day back / forward |
 | `t` | back to today |
-| `Tab` / `m` | the next screen: Moon, map, photo |
+| `Tab` / `m` | the map, and back |
 | `Esc` | back to the Moon |
 | `/` | find a feature and open the map on it |
 | `f` | naked eye, telescope, star diagonal |
@@ -30,7 +31,7 @@ Part of the [Fe₂O₃ suite](https://isene.github.io/fe2o3/). Built on
 
 ## The map
 
-`Tab` or `m` opens a braille map of the near side with the features
+`Tab` or `m` opens a map of the near side with the features
 named: the seas in blue, craters in yellow, mountains, valleys and
 rilles in tan. Zoom in and more names appear, biggest first, wherever
 there is room. The craters that stand out to the naked eye, such as
@@ -44,36 +45,29 @@ Tycho, Copernicus, Kepler and Aristarchus, are named on the whole disk.
 | `←` `↑` `↓` `→` / `h` `j` `k` `l` | pan |
 | `/` | find a feature: the map centres on it and marks its name |
 | `0` | back to the whole disk |
-| `Tab` / `m` | on to the photo |
+| `Tab` / `m` | back to the Moon |
 | `Esc` | back to the Moon |
 
 ![A search for Tycho, zoomed in and marked](img/screenshot-tycho.png)
 
-Every braille cell holds eight dots in two columns of four, so the map
-has four times the rows of the phase picture. The detail map is 2048
-pixels across, shaded with the Moon's measured heights and lit from the
-north-west so craters show their rims. It is compressed into the binary
-and unpacked the first time the map opens.
+In a terminal that shows images the map is real pixels, with the names
+set into the picture. Elsewhere it is braille: every cell holds eight
+dots in two columns of four, so the map has four times the rows of the
+phase picture.
+
+The detail map is 2048 pixels across, shaded with the Moon's measured
+heights and lit from the north-west so craters show their rims. It is
+compressed into the binary and unpacked the first time it is needed.
 
 The picture is drawn on start, on a key and on a resize. Nothing runs
 in between.
-
-## The photo
-
-`Tab` from the map shows the real Moon: NASA's photo of the near side,
-lit for the day on screen and drawn as a true picture in the terminal.
-`←` and `→` step the days, and the phase strip stays along the bottom.
-It needs a terminal that shows images, like glass or kitty; elsewhere
-the drawn Moon stays with a note.
-
-![The photo in glass: tonight's crescent](img/screenshot-photo.png)
 
 ## Telescope view
 
 `f` turns the picture the way you see it at the eyepiece. It steps from
 the naked eye, north up, to a telescope, which shows the Moon upside
 down with south up, to a star diagonal, which mirrors it left to right.
-The Moon, the photo, the phase strip and the map all follow, and the arrows still
+The Moon, the phase strip and the map all follow, and the arrows still
 pan the way they point.
 
 ![The telescope view, south up](img/screenshot-telescope.png)
@@ -96,10 +90,16 @@ cargo build --release
 
 ## How it is drawn
 
-Every cell is a `▀` with one gray for its top half and one for its
-bottom, so a 50-row window gives a 100-pixel moon. The map is NASA's
-LRO camera mosaic of the near side, 512 pixels across, embedded in the
-binary. The phase comes from orbit's mean lunar cycle, so it can be a
+In glass, or any terminal that shows images, the Moon, the strip and
+the map are drawn through [glow](https://github.com/isene/glow) from
+the shaded 2048-pixel map, at the size of the window in pixels.
+
+Elsewhere every cell is a `▀` with one gray for its top half and one
+for its bottom, so a 50-row window gives a 100-pixel moon from a
+512-pixel map. Both maps are NASA's LRO camera mosaic of the near side,
+embedded in the binary.
+
+The phase comes from orbit's mean lunar cycle, so it can be a
 few hours off the true phase. The Moon's slight wobble (libration) is
 not drawn; the map is always the mean near side, north up, with the lit
 side on the right while waxing, as seen from the northern hemisphere.
@@ -109,10 +109,6 @@ side on the right while waxing, as seen from the northern hemisphere.
 Moon map: NASA/GSFC/Arizona State University, Lunar Reconnaissance
 Orbiter (LROC WAC), from the
 [CGI Moon Kit](https://svs.gsfc.nasa.gov/4720). Public domain.
-
-The photo screen uses the same LROC mosaic, unshaded, at 1024 pixels
-and shown through [glow](https://github.com/isene/glow). The big disk in
-pixels is the shaded 2048-pixel map, through glow as well.
 
 Heights for the map shading: NASA/GSFC, Lunar Orbiter Laser Altimeter
 (LOLA), from the same kit. Public domain.
