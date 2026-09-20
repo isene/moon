@@ -190,9 +190,8 @@ fn main() {
 /// one. `images` is the image display, made on the first paint; where
 /// the terminal shows images, the screens are drawn in real pixels.
 fn render(st: &State, note: Option<&str>, images: &mut Option<glow::Display>) {
-    // Images sit above the text, so they come down before any repaint.
-    let (cols, rows) = Crust::terminal_size();
-    if let Some(d) = images.as_mut() { d.clear(1, 1, cols, rows, cols, rows); }
+    // The new pictures replace the old ones as they go up, so a key
+    // press never shows a bare screen in between.
     let d = images.get_or_insert_with(glow::Display::new);
     let pixels = if d.supported() { Some(d) } else { None };
     match st.screen {
@@ -343,7 +342,7 @@ fn render_phase(st: &State, pixels: Option<&mut glow::Display>) {
     strip.set_text(&format!("\n{}\n{}", lines.join("\n"), labels));
     strip.refresh();
     if let Some(d) = pixels {
-        d.show_canvas(&disk_canvas(f, cols, main_h, None, st.flip), 1, 2);
+        d.swap_canvas(&disk_canvas(f, cols, main_h, None, st.flip), 1, 2);
         let days: Vec<f64> = (0..slots).map(|i| phase_at(day - PAST + i as i64, hours)).collect();
         d.show_canvas(&strip_canvas(&days, SLOT, mini_rows, None, st.flip), 1, (2 + main_h + 1) as u16);
     }
@@ -457,7 +456,7 @@ fn render_map(st: &State, pixels: Option<&mut glow::Display>) {
             let (text, canvas) = map_canvas(cols, h, view, st.flip, features(), st.hit, None);
             main.set_text(&text);
             main.refresh();
-            d.show_canvas(&canvas, 1, 2);
+            d.swap_canvas(&canvas, 1, 2);
         }
         None => {
             main.set_text(&draw_map(cols, h, view, st.flip, features(), st.hit).join("\n"));
