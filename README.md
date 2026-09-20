@@ -6,7 +6,9 @@ The Moon as it looks tonight, in the terminal.
 
 The big disk is the near side of the Moon, lit for the phase of the
 moment: the sunlit part in light gray and white, the night side in dark
-gray, craters and maria on both. A strip of phase symbols along the bottom shows the
+gray, craters and maria on both. In glass, or any terminal that shows
+images, the disk is real pixels; elsewhere each cell holds two. A strip of
+phase symbols along the bottom shows the
 three days before, the day on screen, and the days ahead until the edge
 of the window. Today's label is yellow.
 
@@ -109,7 +111,8 @@ Orbiter (LROC WAC), from the
 [CGI Moon Kit](https://svs.gsfc.nasa.gov/4720). Public domain.
 
 The photo screen uses the same LROC mosaic, unshaded, at 1024 pixels
-and shown through [glow](https://github.com/isene/glow).
+and shown through [glow](https://github.com/isene/glow). The big disk in
+pixels is the shaded 2048-pixel map, through glow as well.
 
 Heights for the map shading: NASA/GSFC, Lunar Orbiter Laser Altimeter
 (LOLA), from the same kit. Public domain.

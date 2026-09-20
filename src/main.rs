@@ -1,7 +1,8 @@
 //! moon — the Moon as it looks tonight.
 //!
-//! The near side, lit for the phase of the moment, drawn with half-block
-//! cells so every cell holds two pixels. A strip along the bottom shows
+//! The near side, lit for the phase of the moment, in real pixels through
+//! glow where the terminal shows images, else in half-block cells so every
+//! cell holds two pixels. A strip along the bottom shows
 //! the days around the one on screen. `m` opens a braille map to zoom and
 //! pan, with the features named, then the real photo through glow; `/`
 //! finds a feature; `f` turns the picture the way a telescope shows it.
@@ -194,22 +195,24 @@ fn main() {
 }
 
 /// Paint the screen for `st`, with `note` on the bottom row if there is
-/// one. `photo` is the image display, made the first time the photo
-/// screen opens.
+/// one. `photo` is the image display, made on the first paint.
 fn render(st: &State, note: Option<&str>, photo: &mut Option<glow::Display>) {
     // A photo sits above the text, so it comes down before any repaint.
     let (cols, rows) = Crust::terminal_size();
     if let Some(d) = photo.as_mut() { d.clear(1, 1, cols, rows, cols, rows); }
     let mut note = note.map(String::from);
     match st.screen {
-        Screen::Moon => render_phase(st, None),
+        Screen::Moon => {
+            let d = photo.get_or_insert_with(glow::Display::new);
+            if d.supported() { render_phase(st, Some(d), false) } else { render_phase(st, None, false) }
+        }
         Screen::Map => render_map(st),
         Screen::Photo => {
             let d = photo.get_or_insert_with(glow::Display::new);
             if d.supported() {
-                render_phase(st, Some(d));
+                render_phase(st, Some(d), true);
             } else {
-                render_phase(st, None);
+                render_phase(st, None, false);
                 note = Some("This terminal cannot show images".to_string());
             }
         }
@@ -301,8 +304,9 @@ fn header(cols: usize, mut facts: Vec<String>, keys: &str) {
 }
 
 /// Paint the Moon and the strip for the day `st.offset` days from today.
-/// With `photo`, the big Moon is the real photo, shown through glow.
-fn render_phase(st: &State, photo: Option<&mut glow::Display>) {
+/// With `pixels`, the big Moon is real pixels shown through glow: the
+/// shaded map, or NASA's photo when `photo` is set.
+fn render_phase(st: &State, pixels: Option<&mut glow::Display>, photo: bool) {
     let (cols, rows) = Crust::terminal_size();
     let (cols, rows) = (cols as usize, rows as usize);
     let (today, hours) = now_local();
@@ -321,8 +325,8 @@ fn render_phase(st: &State, photo: Option<&mut glow::Display>) {
         until(f, 0.0, "new"),
     ];
     if let Some(v) = st.flip.label() { facts.insert(1, v.to_string()); }
-    if photo.is_some() { facts.insert(1, "Photo".to_string()); }
-    header(cols, facts, if photo.is_some() {
+    if photo { facts.insert(1, "Photo".to_string()); }
+    header(cols, facts, if photo {
         "← → day   t today   TAB moon   / find   f view   q quit"
     } else {
         "← → day   t today   TAB map   / find   f view   q quit"
@@ -332,7 +336,7 @@ fn render_phase(st: &State, photo: Option<&mut glow::Display>) {
     let mut main = Pane::new(1, 2, cols as u16, main_h as u16, 255, 16);
     main.wrap = false;
     main.scroll = false;
-    main.set_text(&if photo.is_some() { String::new() } else { draw_moon(f, diam, cols, main_h, st.flip).join("\n") });
+    main.set_text(&if pixels.is_some() { String::new() } else { draw_moon(f, diam, cols, main_h, st.flip).join("\n") });
     main.refresh();
 
     let slots = (cols / SLOT).max(1);
@@ -360,8 +364,8 @@ fn render_phase(st: &State, photo: Option<&mut glow::Display>) {
     strip.scroll = false;
     strip.set_text(&format!("\n{}\n{}", lines.join("\n"), labels));
     strip.refresh();
-    if let Some(d) = photo {
-        let png = photo_png(f, cols, main_h, glow::get_cell_size(), st.flip);
+    if let Some(d) = pixels {
+        let png = disk_png(f, cols, main_h, glow::get_cell_size(), st.flip, photo);
         d.show_png(&png, 1, 2, cols as u16, main_h as u16);
     }
 }
@@ -637,18 +641,26 @@ fn photo_map() -> &'static Vec<u8> {
     PX.get_or_init(|| inflate_rows(PHOTO, PHOTO_N))
 }
 
-/// The real Moon for phase `f`: NASA's photo lit by the Sun, as a PNG
-/// filling `cols` × `rows` cells of `cell` pixels, turned by `flip`.
+/// The Moon for phase `f` as a PNG filling `cols` × `rows` cells of
+/// `cell` pixels, turned by `flip`: the shaded map lit by the Sun with
+/// earthshine on the night side, or NASA's photo when `photo` is set.
 /// Sized to whole cells so glow places it without stretching.
-fn photo_png(f: f64, cols: usize, rows: usize, cell: (u16, u16), flip: Flip) -> Vec<u8> {
+fn disk_png(f: f64, cols: usize, rows: usize, cell: (u16, u16), flip: Flip, photo: bool) -> Vec<u8> {
     let (w, h) = (cols * cell.0 as usize, rows * cell.1 as usize);
-    encode_png(&photo_pixels(f, w, h, flip), w, h, image::codecs::png::FilterType::Up)
+    let rgba = if photo {
+        disk_pixels(f, w, h, flip, PHOTO_NIGHT, PHOTO_RAMP, |x, y, _| photo_albedo(x, y))
+    } else {
+        // Map pixels per screen pixel picks the halving to read.
+        disk_pixels(f, w, h, flip, NIGHT, RAMP, |x, y, r| sample(levels(), x, y, BIG_N as f32 / (2.0 * r)))
+    };
+    encode_png(&rgba, w, h, image::codecs::png::FilterType::Up)
 }
 
-/// The photo's pixels, `w` × `h`, as RGBA.
-fn photo_pixels(f: f64, w: usize, h: usize, flip: Flip) -> Vec<u8> {
-    let map = photo_map();
-    let n = PHOTO_N as f32;
+/// The disk's pixels, `w` × `h`, as RGBA. `albedo(x, y, r)` gives the
+/// surface brightness (0..1) at disk point (x, y) on a disk `r` pixels in
+/// radius; `night` is how bright the dark side stays and `ramp` how sharp
+/// the terminator is.
+fn disk_pixels(f: f64, w: usize, h: usize, flip: Flip, night: f32, ramp: f32, albedo: impl Fn(f32, f32, f32) -> f32) -> Vec<u8> {
     let r = (w.min(h) as f32 / 2.0 - 1.0).max(1.0);
     let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
     let sun = ((f * 2.0 * PI).sin() as f32, -((f * 2.0 * PI).cos()) as f32);
@@ -670,24 +682,31 @@ fn photo_pixels(f: f64, w: usize, h: usize, flip: Flip) -> Vec<u8> {
             if cover <= 0.0 { continue; }
             // Pixels on the limb read the map just inside it.
             let inward = if rr > 0.995 { 0.995 / rr } else { 1.0 };
-            let u = ((x * inward + 1.0) / 2.0 * n - 0.5).clamp(0.0, n - 1.0);
-            let v = ((1.0 - y * inward) / 2.0 * n - 0.5).clamp(0.0, n - 1.0);
-            let (x0, y0) = (u as usize, v as usize);
-            let (x1, y1) = ((x0 + 1).min(PHOTO_N - 1), (y0 + 1).min(PHOTO_N - 1));
-            let (fx, fy) = (u - x0 as f32, v - y0 as f32);
-            let at = |i: usize, j: usize| map[j * PHOTO_N + i] as f32;
-            let albedo = (at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx) * (1.0 - fy)
-                + (at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx) * fy;
+            let a = albedo(x * inward, y * inward, r);
             let z = (1.0 - rr * rr).max(0.0).sqrt();
-            let lit = ((x * sun.0 + z * sun.1) * PHOTO_RAMP).clamp(0.0, 1.0);
-            let g = (albedo / WHITE * (PHOTO_NIGHT + (1.0 - PHOTO_NIGHT) * lit) * cover)
-                .round().clamp(0.0, 255.0) as u8;
+            let lit = ((x * sun.0 + z * sun.1) * ramp).clamp(0.0, 1.0);
+            let g = (a * 255.0 * (night + (1.0 - night) * lit) * cover).round().clamp(0.0, 255.0) as u8;
             rgba[o] = g;
             rgba[o + 1] = g;
             rgba[o + 2] = g;
         }
     }
     rgba
+}
+
+/// The photo's brightness (0..1) at disk point (x, y), read between pixels.
+fn photo_albedo(x: f32, y: f32) -> f32 {
+    let map = photo_map();
+    let n = PHOTO_N as f32;
+    let u = ((x + 1.0) / 2.0 * n - 0.5).clamp(0.0, n - 1.0);
+    let v = ((1.0 - y) / 2.0 * n - 0.5).clamp(0.0, n - 1.0);
+    let (x0, y0) = (u as usize, v as usize);
+    let (x1, y1) = ((x0 + 1).min(PHOTO_N - 1), (y0 + 1).min(PHOTO_N - 1));
+    let (fx, fy) = (u - x0 as f32, v - y0 as f32);
+    let at = |i: usize, j: usize| map[j * PHOTO_N + i] as f32;
+    let a = (at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx) * (1.0 - fy)
+        + (at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx) * fy;
+    a / 255.0 / WHITE
 }
 
 fn encode_png(rgba: &[u8], w: usize, h: usize, filter: image::codecs::png::FilterType) -> Vec<u8> {
@@ -853,21 +872,27 @@ mod tests {
     }
 
     #[test]
-    fn the_photo_fills_whole_cells_and_is_lit_on_the_sunward_side() {
-        let sides = |flip: Flip| {
-            let png = photo_png(0.25, 40, 20, (10, 20), flip);
+    fn the_disk_fills_whole_cells_and_is_lit_on_the_sunward_side() {
+        let sides = |flip: Flip, photo: bool| {
+            let png = disk_png(0.25, 40, 20, (10, 20), flip, photo);
             let img = image::load_from_memory(&png).unwrap().to_luma8();
             assert_eq!(img.dimensions(), (400, 400));
             (img.get_pixel(120, 200)[0], img.get_pixel(280, 200)[0])
         };
-        // First quarter: to the eye the right side is lit.
-        let (left, right) = sides(Flip::Eye);
-        assert!(right > 60 && right > left.saturating_mul(3), "left {left}, right {right}");
-        let (left, right) = sides(Flip::Telescope);
-        assert!(left > 60 && left > right.saturating_mul(3), "left {left}, right {right}");
+        for photo in [false, true] {
+            // First quarter: to the eye the right side is lit.
+            let (left, right) = sides(Flip::Eye, photo);
+            assert!(right > 60 && right > left.saturating_mul(2), "photo {photo}: left {left}, right {right}");
+            let (left, right) = sides(Flip::Telescope, photo);
+            assert!(left > 60 && left > right.saturating_mul(2), "photo {photo}: left {left}, right {right}");
+        }
+        // The shaded look keeps earthshine on the night side; the photo goes nearly black.
+        let (shaded_night, _) = sides(Flip::Eye, false);
+        let (photo_night, _) = sides(Flip::Eye, true);
+        assert!(shaded_night > 20 && photo_night < shaded_night, "shaded {shaded_night}, photo {photo_night}");
         let t = std::time::Instant::now();
-        let png = photo_png(0.3, 190, 50, (10, 20), Flip::Eye);
-        eprintln!("photo 1900x1000: {:?}, {} bytes", t.elapsed(), png.len());
+        let png = disk_png(0.3, 190, 50, (10, 20), Flip::Eye, false);
+        eprintln!("shaded 1900x1000: {:?}, {} bytes", t.elapsed(), png.len());
     }
 
     #[test]

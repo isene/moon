@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "fe2o3-crust"
-version = "0.1.53"
+version = "0.1.55"
 dependencies = [
  "crossterm",
  "libc",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "fe2o3-glow"
-version = "0.1.26"
+version = "0.1.29"
 dependencies = [
  "base64",
  "image",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "moon"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "fe2o3-crust",
  "fe2o3-glow",

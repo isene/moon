@@ -1,6 +1,6 @@
 [package]
 name = "moon"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["Geir Isene <g@isene.com>"]
 description = "The Moon as it looks tonight: the near side lit for its phase, with the days around it. Built on crust and orbit."
