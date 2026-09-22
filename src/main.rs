@@ -284,6 +284,38 @@ fn header(cols: usize, mut facts: Vec<String>, keys: &str) {
     bar.refresh();
 }
 
+/// The bar along the bottom: what was asked about last, or what the
+/// screen is showing. The picture stops one row short of it.
+fn footer(cols: usize, rows: usize, text: &str) {
+    let mut bar = Pane::new(1, rows as u16, cols as u16, 1, 250, 236);
+    bar.wrap = false;
+    bar.scroll = false;
+    bar.set_text(&format!(" {text}"));
+    bar.refresh();
+}
+
+/// What the map has to say: the place found, or how to find one.
+fn map_footer(st: &State) -> String {
+    let Some(i) = st.hit else {
+        return style::fg("/ finds a place by name", 245);
+    };
+    let f = &features()[i];
+    let kind = match f.kind {
+        b'c' => "crater",
+        b'p' => "plain",
+        _ => "feature",
+    };
+    let side = if f.lon < 0.0 { "W" } else { "E" };
+    let updown = if f.lat < 0.0 { "S" } else { "N" };
+    format!(
+        "{}   {kind}, {:.0} km   {:.1}°{updown} {:.1}°{side}",
+        style::bold(&f.name),
+        f.km,
+        f.lat.abs(),
+        f.lon.abs()
+    )
+}
+
 /// Paint the Moon and the strip for the day `st.offset` days from today.
 /// With `pixels`, the big Moon and the strip are real pixels through glow.
 fn render_phase(st: &State, pixels: Option<&mut glow::Display>) {
@@ -292,7 +324,7 @@ fn render_phase(st: &State, pixels: Option<&mut glow::Display>) {
     let (today, hours) = now_local();
     let day = today + st.offset;
     let strip_h = MINI / 2 + 2;
-    let main_h = rows.saturating_sub(1 + strip_h).max(1);
+    let main_h = rows.saturating_sub(2 + strip_h).max(1);
 
     let f = phase_at(day, hours);
     let (y, m, d) = civil_from_days(day);
@@ -346,6 +378,8 @@ fn render_phase(st: &State, pixels: Option<&mut glow::Display>) {
         let days: Vec<f64> = (0..slots).map(|i| phase_at(day - PAST + i as i64, hours)).collect();
         d.show_canvas(&strip_canvas(&days, SLOT, mini_rows, None, st.flip), 1, (2 + main_h + 1) as u16);
     }
+    // The same bar as the map has, kept clear for what a key has to say.
+    footer(cols, rows, "");
 }
 
 /// The Moon at cycle fraction `f`, `diam` pixels across, centred in
@@ -434,7 +468,10 @@ fn albedo(x: f32, y: f32, size: usize) -> f32 {
 fn render_map(st: &State, pixels: Option<&mut glow::Display>) {
     let (cols, rows) = Crust::terminal_size();
     let (cols, rows) = (cols as usize, rows as usize);
-    let h = rows.saturating_sub(1).max(1);
+    // One row off the bottom for the status bar. Without it the picture
+    // covers that row, and the bar and the Find prompt are drawn under
+    // the picture, where nothing shows them.
+    let h = rows.saturating_sub(2).max(1);
     let view = st.view;
     let lat = view.cy.clamp(-1.0, 1.0).asin();
     let lon = (view.cx / lat.cos().max(1e-6)).clamp(-1.0, 1.0).asin();
@@ -463,6 +500,7 @@ fn render_map(st: &State, pixels: Option<&mut glow::Display>) {
             main.refresh();
         }
     }
+    footer(cols, rows, &map_footer(st));
 }
 
 /// The map in real pixels for a `width` × `rows` cell box of `cell`
