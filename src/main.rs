@@ -133,7 +133,7 @@ fn main() {
         println!("Usage: moon");
         println!();
         println!("Keys: ← → / h l  day back / forward    t  today    TAB / m  Moon or map    q  quit");
-        println!("      /  find a feature    f  naked eye / telescope / star diagonal");
+        println!("      /  find a feature    f  naked eye / telescope / star diagonal    Ctrl+A  ask Claude");
         println!("Map:  + -  zoom    arrows / h j k l  pan    0  reset    ESC  back to the Moon");
         return;
     }
@@ -157,6 +157,16 @@ fn main() {
             "ESC" => st.screen = Screen::Moon,
             "f" => st.flip = st.flip.next(),
             "/" => note = search(&mut st),
+            // Ctrl+A, as in every Fe2O3 app: a Claude session about the
+            // Moon on screen.
+            "C-A" => {
+                if let Some(d) = images.as_mut() { d.clear_all(); }
+                let intro = "I am in moon, my app that shows the Moon as it looks tonight.";
+                if !crust::claude_session("Moon", intro, &claude_context(&st)) {
+                    note = Some("claude is not on the PATH".into());
+                }
+                Crust::clear_screen();
+            }
             "RESIZE" => {}
             k if st.screen == Screen::Map => {
                 let step = 0.3 / st.view.zoom();
@@ -206,6 +216,47 @@ fn render(st: &State, note: Option<&str>, images: &mut Option<glow::Display>) {
         bar.set_text(&format!(" {text}"));
         bar.refresh();
     }
+}
+
+/// What the screen shows, for Claude: the day's Moon, and on the map
+/// where it looks and the names in view.
+fn claude_context(st: &State) -> String {
+    let (today, hours) = now_local();
+    let day = today + st.offset;
+    let f = phase_at(day, hours);
+    let (y, m, d) = civil_from_days(day);
+    let mut ctx = format!(
+        "The Moon on {} {} {} {}{}: {}, {}% lit, {:.1} days old, {}, {}.\n",
+        WEEKDAYS[weekday(day)], d, MONTHS[(m - 1) as usize], y,
+        if st.offset == 0 { " (today)" } else { "" },
+        phase_name(f), (lit_fraction(f) * 100.0).round(), f * SYNODIC,
+        until(f, 0.5, "full"), until(f, 0.0, "new"),
+    );
+    if let Some(v) = st.flip.label() {
+        ctx.push_str(&format!("Turned as in: {v}.\n"));
+    }
+    if st.screen == Screen::Map {
+        let (cols, rows) = Crust::terminal_size();
+        let (w, h) = (cols as usize, rows.saturating_sub(2).max(1) as usize);
+        let view = st.view;
+        let lat = view.cy.clamp(-1.0, 1.0).asin();
+        let lon = (view.cx / lat.cos().max(1e-6)).clamp(-1.0, 1.0).asin();
+        let d = ((w * 2) as f32).min((h * 4) as f32) * 0.96 * view.zoom();
+        let mut cells = vec![vec![" ".to_string(); w]; h];
+        let names: Vec<String> = label(&mut cells, view, st.flip, d, features(), st.hit)
+            .into_iter()
+            .map(|(r, c, n)| crust::strip_ansi(&cells[r][c..c + n].concat()).trim().to_string())
+            .collect();
+        ctx.push_str(&format!(
+            "\nThe map of the near side, zoom {}×, centred on latitude {:.0}°, longitude {:.0}° (east positive).\n",
+            view.zoom(), lat.to_degrees(), lon.to_degrees(),
+        ));
+        if st.hit.is_some() {
+            ctx.push_str(&format!("Found by search: {}\n", crust::strip_ansi(&map_footer(st))));
+        }
+        ctx.push_str(&format!("Named in view: {}\n", names.join(", ")));
+    }
+    ctx
 }
 
 /// `/` asks for a feature, then opens the map on it, zoomed so it fills

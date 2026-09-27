@@ -27,6 +27,7 @@ Part of the [Fe₂O₃ suite](https://isene.github.io/fe2o3/). Built on
 | `Esc` | back to the Moon |
 | `/` | find a feature and open the map on it |
 | `f` | naked eye, telescope, star diagonal |
+| `Ctrl+A` | a Claude session about the Moon on screen (`claude` on the PATH); `/exit` comes back |
 | `q` | quit |
 
 ## The map
