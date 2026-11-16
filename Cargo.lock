@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "fe2o3-crust"
-version = "0.1.76"
+version = "0.1.77"
 dependencies = [
  "crossterm",
  "libc",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "fe2o3-orbit"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "fe2o3-crust",
 ]
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "moon"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "fe2o3-crust",
  "fe2o3-glow",
