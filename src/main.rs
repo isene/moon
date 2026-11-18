@@ -320,8 +320,8 @@ fn aim(view: &mut View, f: &Feature, cols: usize, rows: usize) {
 /// The top bar: facts on the left, keys and version on the right. The
 /// keys always show; a narrow window loses facts from the end.
 fn header(cols: usize, mut facts: Vec<String>, keys: &str) {
-    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let right_w = keys.chars().count() + 3 + version.chars().count() + 1;
+    let version = crust::version_tag("moon", env!("CARGO_PKG_VERSION"));
+    let right_w = keys.chars().count() + 3 + crust::display_width(&version);
     let mut left = format!(" {}", facts.join("   "));
     while facts.len() > 1 && left.chars().count() + right_w + 2 > cols {
         facts.pop();
@@ -331,7 +331,7 @@ fn header(cols: usize, mut facts: Vec<String>, keys: &str) {
     let mut bar = Pane::new(1, 1, cols as u16, 1, 255, 236);
     bar.wrap = false;
     bar.scroll = false;
-    bar.set_text(&format!("{left}{}{keys}   {} ", " ".repeat(pad), style::fg(&version, 245)));
+    bar.set_text(&format!("{left}{}{keys}   {version}", " ".repeat(pad)));
     bar.refresh();
 }
 
